@@ -1,0 +1,43 @@
+{
+    "folders": [
+        {
+            "path": "."
+        }
+    ],
+    "settings": {
+        "arduino.path": "C:\\Program Files\\Arduino CLI",
+        "arduino.commandPath": "arduino-cli.exe",
+        "arduino.useArduinoCli": true
+    },
+    "launch": {
+        "version": "0.2.0",
+        "configurations": [
+            {
+                "name": "Build and Upload M5Stack-Core2",
+                "type": "node-terminal",
+                "request": "launch",
+                "command": "cmd /c '\"C:\\Program Files\\Arduino CLI\\arduino-cli.exe\" compile --fqbn esp32:esp32:m5stack-core2 Magicling_code && \"C:\\Program Files\\Arduino CLI\\arduino-cli.exe\" upload --fqbn esp32:esp32:m5stack-core2 -p COM4 Magicling_code'"
+            }
+        ]
+    },
+    "tasks": {
+        "version": "2.0.0",
+        "tasks": [
+            {
+                "label": "Arduino CLI: Upload",
+                "type": "shell",
+                "command": "\"C:\\Program Files\\Arduino CLI\\arduino-cli.exe\" compile --fqbn esp32:esp32:m5stack-core2 Magicling_code && \"C:\\Program Files\\Arduino CLI\\arduino-cli.exe\" upload --fqbn esp32:esp32:m5stack-core2 -p COM4 Magicling_code",
+                "options": {
+                    "shell": {
+                        "executable": "cmd.exe"
+                    }
+                },
+                "group": {
+                    "kind": "build",
+                    "isDefault": true
+                },
+                "problemMatcher": []
+            }
+        ]
+    }
+}
