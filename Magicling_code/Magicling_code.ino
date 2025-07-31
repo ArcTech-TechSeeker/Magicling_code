@@ -17,6 +17,11 @@ float attack_wall = 1;
 float yaw_deg = 0;  // 現在のYaw角（-180〜180）
 float yaw_g0  = 0;  // 前回のYaw角
 float yaw     = 0;  // 積算Yaw角（連続値）
+float attack_yaw = 0;
+
+int attack_key = 0;
+int prev_attack = 0;
+unsigned long attack_key_start = 0;
 
 void setup() {
   Serial.begin(115200);
@@ -110,16 +115,31 @@ void loop() {
     protect = 0;
   }
 
+  // attack の状態変化を検出（1→0）
+    if (prev_attack - attack == 1) {
+        attack_key = 1;
+        attack_key_start = millis();
+    }
+
+    // attack_key が 1 の場合、3秒後に 0 に戻す
+    if (attack_key == 1 && millis() - attack_key_start >= 500) {
+        attack_key = 0;
+    }
+
+    prev_attack = attack;
+
   // ---- 画面発光処理 ----
   if (attack == 1) {
     M5.Display.fillScreen(RED);
   } else if (protect == 1) {
     M5.Display.fillScreen(BLUE);
+  } else if (attack_key == 1) {
+    M5.Display.fillScreen(WHITE);
   } else {
     M5.Display.fillScreen(BLACK);
   }
 
   // ---- デバッグ出力 ----
-  Serial.printf("%.3f,%.3f,%.3f\n", ax_global, ay_global, az_global);
+  Serial.printf("%.3f,%.3f,%.3f\n", axy_pure, az_global, attack_key);
   delay(10);
 }
