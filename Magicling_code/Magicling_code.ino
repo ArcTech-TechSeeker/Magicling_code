@@ -14,14 +14,18 @@ int attack = 0;
 float protect_wall = 1;
 float attack_wall = 1;
 
-float yaw_deg = 0;  // 現在のYaw角（-180〜180）
-float yaw_g0  = 0;  // 前回のYaw角
-float yaw     = 0;  // 積算Yaw角（連続値）
+float yaw_mag = 0;  // 現在のYaw角（-180〜180）
+float yaw     = 0;  // 表示用Yaw角
+float yaw_prev = 0;
 float attack_yaw = 0;
+float yaw_offset = 0;
 
 int attack_key = 0;
 int prev_attack = 0;
 unsigned long attack_key_start = 0;
+
+
+unsigned long lastUpdate = 0;
 
 void setup() {
   Serial.begin(115200);
@@ -41,6 +45,21 @@ void setup() {
   M5.begin(cfg);
   M5.Display.setBrightness(200);
   M5.Display.fillScreen(TFT_BLACK);
+
+  // 初期値として期待する更新レートをセット（後で実測に基づき補正）
+  lastUpdate = micros();
+
+  imu::Vector<3> mag = bno.getVector(Adafruit_BNO055::VECTOR_MAGNETOMETER);
+
+  float mx = mag.x();
+  float my = mag.y();
+
+  // Yaw計算（度）
+  float yaw_offset_mag = atan2(my, mx) * 180.0 / PI;
+
+  // ±180°範囲に正規化
+  if (yaw_offset_mag > 180) yaw_offset_mag -= 360;
+  if (yaw_offset_mag < -180) yaw_offset_mag += 360;
 }
 
 void loop() {
@@ -50,6 +69,12 @@ void loop() {
   imu::Quaternion quat = bno.getQuat();
   // ---- オイラー角 ----
   imu::Vector<3> euler = bno.getVector(Adafruit_BNO055::VECTOR_EULER);
+
+  // --- 地磁気ベクトル取得 ---
+  imu::Vector<3> mag = bno.getVector(Adafruit_BNO055::VECTOR_MAGNETOMETER);
+  float mx = mag.x();
+  float my = mag.y();
+  float mz = mag.z();
 
   if (isnan(linAcc.x()) || isnan(quat.w()) || isnan(euler.x())) {
     Serial.println("読み取り失敗 → スキップ");
@@ -64,6 +89,51 @@ void loop() {
   ax_f = alpha * ax_f + (1 - alpha) * ax;
   ay_f = alpha * ay_f + (1 - alpha) * ay;
   az_f = alpha * az_f + (1 - alpha) * az;
+
+  float roll = euler.y() * PI / 180.0;
+  float pitch = euler.z() * PI / 180.0; 
+
+  float mxh = mx * cos(pitch) + mz * sin(pitch);
+  float myh = mx * sin(roll) * sin(pitch) + my * cos(roll) - mz * sin(roll) * cos(pitch);
+  // Yaw計算（度）
+  yaw_mag = - atan2(-myh, mxh) * 180.0 / PI;
+
+  // ±180°範囲に正規化
+  if (yaw_mag > 180) yaw_mag -= 360;
+  if (yaw_mag < -180) yaw_mag += 360;
+
+  yaw_prev = yaw;
+
+  // 最新Yaw取得
+  yaw = euler.x();
+
+  // ±180°に正規化
+  if (yaw > 180) yaw -= 360;
+  if (yaw < -180) yaw += 360;
+
+  // ジャンプ検出（差分も正規化）
+  float diff = yaw - yaw_prev;
+
+  if (abs(diff) > 30 && abs(diff) < 300) {
+      yaw_offset += diff;
+      attack_key = 1;
+  }else{
+    attack_key = 0;
+  }
+
+  // オフセット適用
+  yaw -= yaw_offset;
+
+  // 再度 ±180°に正規化
+  if (yaw > 180) {
+    int n = abs(yaw / 180);
+    yaw -= 180 + 180 * n;
+  }else if (yaw < -180){
+    int n = abs(yaw / 180);
+    yaw += 180 + 180 * n;
+  } 
+
+
 
   // ---- クォータニオン → 回転行列 ----
   float qw = quat.w();
@@ -89,17 +159,9 @@ void loop() {
   float ay_global = R[1][0] * ax_f + R[1][1] * ay_f + R[1][2] * az_f;
   float az_global = R[2][0] * ax_f + R[2][1] * ay_f + R[2][2] * az_f;
 
-  // ---- Yaw積算処理 ----
-  yaw_g0 = yaw_deg;
-  yaw_deg = euler.x();
-  if (yaw_deg > 180.0) yaw_deg -= 360.0;
-  float delta_yaw = yaw_deg - yaw_g0;
-  if (delta_yaw > 300)  delta_yaw -= 360.0;
-  if (delta_yaw < -300) delta_yaw += 360.0;
-  yaw += delta_yaw;
-
   // ---- 判定用変数 ----
   float axy_pure = sqrt(ax_global * ax_global + ay_global * ay_global);
+  float a_pure = sqrt(ax_global * ax_global + ay_global * ay_global + az_global*az_global);
 
   // ---- 攻撃/防御判定 ----
   if (az_global > protect_wall || axy_pure > attack_wall) {
@@ -115,31 +177,43 @@ void loop() {
     protect = 0;
   }
 
-  // attack の状態変化を検出（1→0）
-    if (prev_attack - attack == 1) {
-        attack_key = 1;
-        attack_key_start = millis();
-    }
+  // ---- attack の状態変化を検出（1→0）----
+  // if (prev_attack - attack == 1) {
+  //   attack_key = 1;
+  //   attack_yaw = yaw;
+  //   attack_key_start = millis();
+  // }
 
-    // attack_key が 1 の場合、3秒後に 0 に戻す
-    if (attack_key == 1 && millis() - attack_key_start >= 500) {
-        attack_key = 0;
-    }
+  // // attack_key が 1 の場合、0.5秒後に0に戻す
+  // if (attack_key == 1 && millis() - attack_key_start >= 500) {
+  //   attack_key = 0;
+  // }
 
-    prev_attack = attack;
+  prev_attack = attack;
 
-  // ---- 画面発光処理 ----
-  if (attack == 1) {
-    M5.Display.fillScreen(RED);
-  } else if (protect == 1) {
-    M5.Display.fillScreen(BLUE);
-  } else if (attack_key == 1) {
-    M5.Display.fillScreen(WHITE);
-  } else {
-    M5.Display.fillScreen(BLACK);
-  }
+  M5.Display.fillScreen(BLACK);
+  M5.Display.setTextSize(7);
+  M5.Display.setTextColor(WHITE, BLACK);
+  if (attack_key == 1) M5.Display.setTextColor(WHITE, RED);
+  M5.Display.setCursor(0, M5.Display.height()/2 - 20);
+  M5.Display.printf("%d", (int)yaw);
+
+  // ---- 画面表示処理 ----
+  // if (attack == 1) {
+  //   M5.Display.fillScreen(RED);
+  // } else if (protect == 1) {
+  //   M5.Display.fillScreen(BLUE);
+  // } else if (attack_key == 1) {
+  //   M5.Display.fillScreen(BLACK);
+  //   M5.Display.setTextSize(7);
+  //   M5.Display.setTextColor(WHITE, BLACK);
+  //   M5.Display.setCursor(0, M5.Display.height()/2 - 20);
+  //   M5.Display.printf("%d", (int)attack_yaw);
+  // } else {
+  //   M5.Display.fillScreen(BLACK);
+  // }
 
   // ---- デバッグ出力 ----
-  Serial.printf("%.3f,%.3f,%.3f\n", axy_pure, az_global, attack_key);
-  delay(10);
+  Serial.printf("%.3f,%.3f,%.3f \n", ax_f, euler.x(), yaw);
+  delay(1);
 }
