@@ -165,9 +165,9 @@ void updateDisplay() {
   } else if (protect == 1) {
     M5.Display.fillScreen(BLUE);
   } else if (attack_key == 1) {
-    M5.Display.fillScreen(YELLOW);
+    M5.Display.fillScreen(BLACK);
     M5.Display.setTextSize(7);
-    M5.Display.setTextColor(BLACK, YELLOW);
+    M5.Display.setTextColor(RED, BLACK);
     M5.Display.setCursor(0, M5.Display.height()/2 - 20);
     M5.Display.printf("%d", (int)attack_yaw);
   } else {
