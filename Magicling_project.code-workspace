@@ -7,7 +7,12 @@
     "settings": {
         "arduino.path": "C:\\Program Files\\Arduino CLI",
         "arduino.commandPath": "arduino-cli.exe",
-        "arduino.useArduinoCli": true
+        "arduino.useArduinoCli": true,
+        "files.associations": {
+            "cmath": "cpp",
+            "complex": "cpp",
+            "random": "cpp"
+        }
     },
     "launch": {
         "version": "0.2.0",
