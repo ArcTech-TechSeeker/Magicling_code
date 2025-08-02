@@ -7,6 +7,12 @@
 // 引数: センサID(任意), I2Cアドレス
 Adafruit_BNO055 bno(55, 0x29);
 
+// PWM設定
+const int motorPin = 25;     // 振動モータの制御ピン（GPIO25）
+const int pwmChannel = 0;    // PWMチャンネル番号（0〜15）
+const int pwmFreq = 200;     // PWM周波数（Hz）※振動モータは低めでOK
+const int pwmResolution = 8; // 分解能（8bit -> 0〜255）
+
 // ==== ローパスフィルタ用変数 ====
 // alpha: 過去データの残す割合（0.0〜1.0）
 float alpha = 0.7;
@@ -41,6 +47,7 @@ unsigned long attack_key_start = 0;      // 攻撃キーが押された時刻（
 
 // ==== 時間計測用変数 ====
 unsigned long prevMicros = 0;            // 前回のループ開始時刻（µs）
+long n = 0;                              //ループカウント用
 
 // ==== センサー取得結果を保持する変数 ====
 // linAcc: ローカル座標系の線形加速度（重力成分除去済み）
@@ -183,6 +190,29 @@ void updateDisplay() {
   }
 }
 
+// 加速度ベクトルの大きさに基づいて振動モータを制御する関数
+void Vibration(float ax_global, float ay_global, float az_global) {
+
+  // グローバル座標系での加速度ベクトルの大きさ（重力込み）を計算
+  // √(ax^2 + ay^2 + az^2) → 全方向の加速度の合成値
+  float a_pure = sqrt(ax_global * ax_global +
+                      ay_global * ay_global +
+                      az_global * az_global);
+
+  // 加速度の値を 3 乗して感度を調整し、スケーリング係数300を掛けて PWM 値に変換
+  // 3乗することで小さい加速度変化に対して感度を下げ、大きい加速度で急に強くなるカーブになる
+  int vib = a_pure * 40;
+
+  // 上限値を 250 に制限（PWM 8bit の最大255に近い値）
+  if (vib > 250) vib = 250;
+  // 下限閾値60未満はモータ停止（物理的に動かない領域をカット）
+  else if (vib < 10) vib = 0;
+
+  // PWM出力で振動モータを駆動
+  ledcWrite(pwmChannel, vib);
+}
+
+
 // ==== セットアップ処理 ====
 // ハードウェア初期化、BNO055設定、M5Stack画面初期化
 void setup() {
@@ -197,11 +227,21 @@ void setup() {
   delay(100);
   bno.setExtCrystalUse(true);            // 外部水晶振動子使用
   bno.setMode(OPERATION_MODE_NDOF);      // 9軸融合モード
+  
 
+  // M5Unifiedの設定オブジェクトを取得（デフォルト設定を読み込む）
   auto cfg = M5.config();
+  // M5Stack Core2 の初期化（cfg の設定値に基づいて LCD やタッチパネル、I2C 等を初期化）
   M5.begin(cfg);
+  // LCDのバックライト輝度を設定（0〜255、ここでは200）
   M5.Display.setBrightness(200);
+  // LCD画面を黒色で塗りつぶす（TFT_BLACK は黒を表す定数）
   M5.Display.fillScreen(TFT_BLACK);
+
+
+  // PWM初期化
+  ledcSetup(pwmChannel, pwmFreq, pwmResolution);
+  ledcAttachPin(motorPin, pwmChannel);
 
   prevMicros = micros(); // 時間計測初期化
 }
@@ -217,7 +257,14 @@ void loop() {
   if (isnan(linAcc.x()) || isnan(quat.w()) || isnan(euler.x())) {
     Serial.println("読み取り失敗 → スキップ");
     delay(10);
-    return;
+    // 再取得
+    readSensors();
+
+    // まだダメなら加速度0として続行
+    if (isnan(linAcc.x()) || isnan(quat.w()) || isnan(euler.x())) {
+        Serial.println("再試行失敗 → デフォルト値で続行");
+        ax_f = 0; ay_f = 0; az_f = 0;
+    }
   }
 
   float ax_global, ay_global, az_global;
@@ -225,6 +272,9 @@ void loop() {
   detectAttackProtect(ax_global, ay_global, az_global);     // 攻撃・防御判定
   updateAttackKey();                                        // 攻撃キー更新
   updateJumpCompensation(sqrt(ax_global*ax_global + ay_global*ay_global)); // ジャンプ補正
+  n = n + 1;
+  if (n > 1000) n = 1;
+  Vibration(ax_global, ay_global, az_global);
   updateDisplay(); // 状態に応じた画面更新
 
   // デバッグ用に加速度・Yaw値をシリアル出力
