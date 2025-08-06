@@ -2,6 +2,9 @@
 #include <Adafruit_BNO055.h>             // BNO055 9軸センサ用ライブラリ
 #include <utility/imumaths.h>            // ベクトルやクォータニオン演算用のユーティリティ
 #include <M5Unified.h>                   // M5Stack Core2 用の統合ライブラリ
+#include <BluetoothSerial.h>
+BluetoothSerial SerialBT; // Bluetooth SPP通信用
+
 
 // ==== BNO055センサのインスタンス生成 ====
 // 引数: センサID(任意), I2Cアドレス
@@ -13,13 +16,16 @@ const int pwmChannel = 0;    // PWMチャンネル番号（0〜15）
 const int pwmFreq = 200;     // PWM周波数（Hz）※振動モータは低めでOK
 const int pwmResolution = 8; // 分解能（8bit -> 0〜255）
 
+int in = 0, in0 = 0;           // シリアル入力値（前回値と現在値）
+int l = 0;                     // メインループカウンタ
+
 // ==== ローパスフィルタ用変数 ====
 // alpha: 過去データの残す割合（0.0〜1.0）
 float alpha = 0.7;
 float ax_f = 0, ay_f = 0, az_f = 0;      // ローパス適用後の加速度
 
-// ==== 攻撃・防御状態フラグ ====
-int protect = 0, attack = 0;
+// ==== 攻撃・防御・詠唱状態フラグ ====
+int protect = 0, attack = 0, spell = 0;
 
 // ==== 攻撃・防御の判定閾値 ====
 float protect_wall = 1;                  // Z軸加速度で防御と判定する閾値
@@ -34,6 +40,10 @@ float attack_wall = 1.2;                  // XY平面の加速度で攻撃と判
 float yaw = 0, yaw_prev = 0, yaw_raw = 0.0, saved_yaw = 0.0;
 float attack_yaw = 0, yaw_offset = 0;
 
+//roll:ロール角
+//pitch:ピッチ角
+float roll = 0, pitch = 0;
+
 // ==== ジャンプ（急激なYaw変化）検出用変数 ====
 // jump: ジャンプ状態フラグ
 // jump_prev: 前回のジャンプ状態
@@ -47,7 +57,8 @@ unsigned long attack_key_start = 0;      // 攻撃キーが押された時刻（
 
 // ==== 時間計測用変数 ====
 unsigned long prevMicros = 0;            // 前回のループ開始時刻（µs）
-long n = 0;                              //ループカウント用
+// ピッチが閾値を超えた時刻を記録する変数
+unsigned long pitchStartTime = 0;
 
 // ==== センサー取得結果を保持する変数 ====
 // linAcc: ローカル座標系の線形加速度（重力成分除去済み）
@@ -58,12 +69,13 @@ imu::Vector<3> linAcc, euler, mag;
 imu::Quaternion quat;
 
 // ==== ユーティリティ関数 ====
-// ±180°の範囲に角度を正規化する
+// ±180°の範囲に角度を正規化する（何度でも繰り返して収める）
 float normalize180(float angle) {
-  if (angle > 180) angle -= 360;
-  if (angle < -180) angle += 360;
+  while (angle > 180.0f) angle -= 360.0f;
+  while (angle <= -180.0f) angle += 360.0f;
   return angle;
 }
+
 
 // ==== センサー値の取得とローパスフィルタ適用 ====
 // BNO055から加速度・姿勢情報を取得し、加速度はローパス処理
@@ -132,6 +144,11 @@ void updateAttackKey() {
   prev_attack = attack;
 }
 
+void updaterollandpitch(){
+  pitch = normalize180(euler.y());
+  roll = normalize180(euler.z());
+}
+
 
 // ==== ジャンプ検出と補正 ====
 // 急激なYaw変化（ジャンプ）を検出し、一定時間固定表示後に補正適用
@@ -163,6 +180,24 @@ void updateJumpCompensation(float axy_pure) {
   yaw_prev = yaw_raw;
 }
 
+void updatespell() {
+  // pitchが80度以上ならタイマー開始
+  if (abs(pitch) >= 70) {
+    // まだタイマーをスタートしていなければ開始時刻を記録
+    if (pitchStartTime == 0) {
+      pitchStartTime = millis();
+    }
+    // 0.1秒（100ms）以上経過していたらspell=1
+    if (millis() - pitchStartTime >= 100) {
+      spell = 1;
+    }
+  } else {
+    // 条件を満たさなければリセット
+    pitchStartTime = 0;
+    spell = 0;
+  }
+}
+
 // ==== 画面表示更新 ====
 // 状態に応じた背景色・文字色設定と表示
 void updateDisplay() {
@@ -177,6 +212,8 @@ void updateDisplay() {
     M5.Display.setTextColor(RED, BLACK);
     M5.Display.setCursor(0, M5.Display.height()/2 - 20);
     M5.Display.printf("%d", (int)attack_yaw);
+  }else if (spell == 1){
+    M5.Display.fillScreen(YELLOW);
   } else {
     M5.Display.fillScreen(BLACK);
   }
@@ -192,24 +229,66 @@ void updateDisplay() {
 
 // 加速度ベクトルの大きさに基づいて振動モータを制御する関数
 void Vibration(float ax_global, float ay_global, float az_global) {
+  in0 = in;
+  if (SerialBT.available() > 0) {
+    in = SerialBT.read();
+    if (in < '0' || in > '5') in = in0;
+  } else {
+    in = in0;
+  }
 
-  // グローバル座標系での加速度ベクトルの大きさ（重力込み）を計算
-  // √(ax^2 + ay^2 + az^2) → 全方向の加速度の合成値
-  float a_pure = sqrt(ax_global * ax_global +
-                      ay_global * ay_global +
-                      az_global * az_global);
+  if(in == 0){
+    // グローバル座標系での加速度ベクトルの大きさ（重力込み）を計算
+    // √(ax^2 + ay^2 + az^2) → 全方向の加速度の合成値
+    float a_pure = sqrt(ax_global * ax_global +
+                        ay_global * ay_global +
+                        az_global * az_global);
 
-  // 加速度の値を 3 乗して感度を調整し、スケーリング係数300を掛けて PWM 値に変換
-  // 3乗することで小さい加速度変化に対して感度を下げ、大きい加速度で急に強くなるカーブになる
-  int vib = a_pure * 40;
+    // 加速度の値を 3 乗して感度を調整し、スケーリング係数300を掛けて PWM 値に変換
+    // 3乗することで小さい加速度変化に対して感度を下げ、大きい加速度で急に強くなるカーブになる
+    int vib = a_pure * 40;
 
-  // 上限値を 250 に制限（PWM 8bit の最大255に近い値）
-  if (vib > 250) vib = 250;
-  // 下限閾値60未満はモータ停止（物理的に動かない領域をカット）
-  else if (vib < 10) vib = 0;
+    // 上限値を 250 に制限（PWM 8bit の最大255に近い値）
+    if (vib > 250) vib = 250;
+    // 下限閾値60未満はモータ停止（物理的に動かない領域をカット）
+    else if (vib < 10) vib = 0;
 
-  // PWM出力で振動モータを駆動
-  ledcWrite(pwmChannel, vib);
+    // PWM出力で振動モータを駆動
+    ledcWrite(pwmChannel, vib);
+  }else {
+    int flashRate = 0;
+    float flashRate_deno = 0; 
+    if (in == '1') {flashRate = 20; flashRate_deno = 0.4;} 
+    else if (in == '2') {flashRate = 40; flashRate_deno = 0.2;}
+    else if (in == '3') {flashRate = 80; flashRate_deno = 0.125;}
+    else if (in == '4') {flashRate = 100; flashRate_deno = 0.9;}
+    bool motorOn = (l % flashRate < flashRate * flashRate_deno);
+    ledcWrite(pwmChannel, motorOn ? 255 : 0);
+  }
+}
+
+// ===============================
+// データ送信（シリアル通信）
+// ===============================
+void outputDataAsBytes() {
+  // 送る値を int16_t に変換（整数化）
+  int16_t protect_to_send    = (int16_t)protect;                // 1 or 0
+  int16_t spell_to_send      = (int16_t)spell;                  // 1 or 0
+  int16_t spell2_to_send      = (int16_t)attack;                  // 1 or 0
+  int16_t attack_key_to_send = (int16_t)attack_key;              // 1 or 0
+  int16_t attack_yaw_to_send = (int16_t)(attack_yaw * 10.0f);    // 0.1刻み
+
+  // バッファ作成
+  uint8_t buffer[sizeof(int16_t) * 5];
+  memcpy(buffer,                           &protect_to_send,    sizeof(int16_t));
+  memcpy(buffer + 1 * sizeof(int16_t),     &spell_to_send,      sizeof(int16_t));
+  memcpy(buffer + 2 * sizeof(int16_t),     &spell2_to_send,      sizeof(int16_t));
+  memcpy(buffer + 3 * sizeof(int16_t),     &attack_key_to_send, sizeof(int16_t));
+  memcpy(buffer + 4 * sizeof(int16_t),     &attack_yaw_to_send, sizeof(int16_t));
+
+  // 送信
+  SerialBT.write('S');                     // ヘッダ
+  SerialBT.write(buffer, sizeof(buffer));  // 本文
 }
 
 
@@ -217,6 +296,8 @@ void Vibration(float ax_global, float ay_global, float az_global) {
 // ハードウェア初期化、BNO055設定、M5Stack画面初期化
 void setup() {
   Serial.begin(115200);
+  SerialBT.begin("M5Core2 1P");   // Bluetoothデバイス名
+  Serial.println("Bluetooth SPP start");
   Wire.begin(32, 33);
   Wire.setTimeOut(100);
 
@@ -268,14 +349,20 @@ void loop() {
   }
 
   float ax_global, ay_global, az_global;
+  updaterollandpitch();
   calcGlobalAcceleration(ax_global, ay_global, az_global); // グローバル加速度算出
   detectAttackProtect(ax_global, ay_global, az_global);     // 攻撃・防御判定
-  updateAttackKey();                                        // 攻撃キー更新
+  updateAttackKey();      
+  updatespell();                                  // 攻撃キー更新
   updateJumpCompensation(sqrt(ax_global*ax_global + ay_global*ay_global)); // ジャンプ補正
-  n = n + 1;
-  if (n > 1000) n = 1;
   Vibration(ax_global, ay_global, az_global);
   updateDisplay(); // 状態に応じた画面更新
+  // Bluetooth通信で情報の送信
+  outputDataAsBytes();
+
+  // ループカウンタ更新（4000を超えたら1に戻す）
+  l++;
+  if (l > 4000) l = 1;
 
   // デバッグ用に加速度・Yaw値をシリアル出力
   // Serial.printf("%.3f,%.3f,%.3f \n", ax_f, euler.x(), yaw);

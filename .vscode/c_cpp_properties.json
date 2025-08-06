@@ -219,6 +219,7 @@
                 "C:\\Users\\naka6\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\2.0.14\\variants\\m5stack_core2",
                 "C:\\Users\\naka6\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\2.0.14\\libraries\\Wire\\src",
                 "C:\\Users\\naka6\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\2.0.14\\libraries\\SPI\\src",
+                "C:\\Users\\naka6\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\2.0.14\\libraries\\BluetoothSerial\\src",
                 "c:\\users\\naka6\\appdata\\local\\arduino15\\packages\\esp32\\tools\\xtensa-esp32-elf-gcc\\esp-2021r2-patch5-8.4.0\\xtensa-esp32-elf\\include\\c++\\8.4.0",
                 "c:\\users\\naka6\\appdata\\local\\arduino15\\packages\\esp32\\tools\\xtensa-esp32-elf-gcc\\esp-2021r2-patch5-8.4.0\\xtensa-esp32-elf\\include\\c++\\8.4.0\\xtensa-esp32-elf",
                 "c:\\users\\naka6\\appdata\\local\\arduino15\\packages\\esp32\\tools\\xtensa-esp32-elf-gcc\\esp-2021r2-patch5-8.4.0\\xtensa-esp32-elf\\include\\c++\\8.4.0\\backward",
