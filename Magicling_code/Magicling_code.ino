@@ -296,7 +296,7 @@ void outputDataAsBytes() {
 // ハードウェア初期化、BNO055設定、M5Stack画面初期化
 void setup() {
   Serial.begin(115200);
-  SerialBT.begin("M5Core2 1P");   // Bluetoothデバイス名
+  SerialBT.begin("M5Core2_1P");   // Bluetoothデバイス名
   Serial.println("Bluetooth SPP start");
   Wire.begin(32, 33);
   Wire.setTimeOut(100);
