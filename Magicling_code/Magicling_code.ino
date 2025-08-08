@@ -10,6 +10,10 @@ BluetoothSerial SerialBT; // Bluetooth SPP通信用
 // 引数: センサID(任意), I2Cアドレス
 Adafruit_BNO055 bno(55, 0x29);
 
+//1P,2Pの指定
+String name = "1P";
+//String name = "2P";
+
 // PWM設定
 const int motorPin = 25;     // 振動モータの制御ピン（GPIO25）
 const int pwmChannel = 0;    // PWMチャンネル番号（0〜15）
@@ -215,7 +219,14 @@ void updateDisplay() {
   }else if (spell == 1){
     M5.Display.fillScreen(YELLOW);
   } else {
+    // 背景が黒のとき「1P」を中央に表示
     M5.Display.fillScreen(BLACK);
+    M5.Display.setTextSize(7);
+    M5.Display.setTextColor(WHITE, BLACK);
+    int16_t x = (M5.Display.width() - 7 * 6 * 2) / 2;
+    int16_t y = M5.Display.height() / 2 - 20;
+    M5.Display.setCursor(x, y);
+    M5.Display.print(name);
   }
 
   if (jump == 1) {
@@ -296,13 +307,19 @@ void outputDataAsBytes() {
 // ハードウェア初期化、BNO055設定、M5Stack画面初期化
 void setup() {
   Serial.begin(115200);
-  SerialBT.begin("M5Core2_1P");   // Bluetoothデバイス名
+  SerialBT.begin("M5Core2_" + name);   // Bluetoothデバイス名
   Serial.println("Bluetooth SPP start");
   Wire.begin(32, 33);
   Wire.setTimeOut(100);
 
   if (!bno.begin()) {
     Serial.println("BNO055接続失敗");
+
+    // 画面にエラー表示
+    M5.Display.setCursor(20, M5.Display.height() / 2 - 20);
+    M5.Display.println("Sensor Error!");
+    M5.Display.setCursor(20, M5.Display.height() / 2 + 20);
+    M5.Display.println("Check BNO055");
     while (1); // 無限ループで停止
   }
   delay(100);
@@ -318,6 +335,15 @@ void setup() {
   M5.Display.setBrightness(200);
   // LCD画面を黒色で塗りつぶす（TFT_BLACK は黒を表す定数）
   M5.Display.fillScreen(TFT_BLACK);
+
+  // 起動時に中央に「1P」を表示（背景黒）
+  M5.Display.fillScreen(BLACK);
+  M5.Display.setTextSize(7);
+  M5.Display.setTextColor(WHITE, BLACK);
+  int16_t x = (M5.Display.width() - 7 * 6 * 2) / 2;  // 文字幅に基づいて中央計算（文字サイズ7だと約14px幅）
+  int16_t y = M5.Display.height() / 2 - 20;
+  M5.Display.setCursor(x, y);
+  M5.Display.print("name");
 
 
   // PWM初期化
@@ -366,5 +392,5 @@ void loop() {
 
   // デバッグ用に加速度・Yaw値をシリアル出力
   // Serial.printf("%.3f,%.3f,%.3f \n", ax_f, euler.x(), yaw);
-  delay(1); // CPU負荷低減
+  delay(10); // CPU負荷低減
 }

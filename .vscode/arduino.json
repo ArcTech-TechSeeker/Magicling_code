@@ -1,7 +1,7 @@
 {
     "sketch": "Magicling_code/Magicling_code.ino",
     "board": "esp32:esp32:m5stack-core2",
-    "port": "COM4",
+    "port": "COM7",
     "output": "../build",
     "configuration": "PSRAM=enabled,PartitionScheme=default,CPUFreq=240,FlashMode=dio,FlashFreq=80,FlashSize=16MB,UploadSpeed=115200,DebugLevel=none"
 }
