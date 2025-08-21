@@ -16,8 +16,7 @@ String name = "1P";
 //String name = "2P";
 
 // PWM設定
-const int motorPin = 25;     // 振動モータの制御ピン（GPIO25）
-const int pwmChannel = 0;    // PWMチャンネル番号（0〜15）
+const int motorPin = 25;     // 振動モータの制御ピン（GPIO25））
 const int pwmFreq = 2000;     // PWM周波数（Hz）※振動モータは低めでOK
 const int pwmResolution = 8; // 分解能（8bit -> 0〜255）
 
@@ -230,7 +229,7 @@ void Vibration(float ax_global, float ay_global, float az_global) {
     else if (vib < 10) vib = 0;
 
     // PWM出力で振動モータを駆動
-    ledcWrite(pwmChannel, vib);
+    ledcWrite(motorPin, vib);
   }else {
     int flashRate = 0;
     float flashRate_deno = 0; 
@@ -239,7 +238,7 @@ void Vibration(float ax_global, float ay_global, float az_global) {
     else if (in == '3') {flashRate = 80; flashRate_deno = 0.125;}
     else if (in == '4') {flashRate = 100; flashRate_deno = 0.9;}
     bool motorOn = (l % flashRate < flashRate * flashRate_deno);
-    ledcWrite(pwmChannel, motorOn ? 255 : 0);
+    ledcWrite(motorPin, motorOn ? 255 : 0);
   }
 }
 
@@ -288,9 +287,7 @@ void setup() {
   bno.setMode(OPERATION_MODE_NDOF);      // 9軸融合モード
   
   // PWM初期化
-  ledcSetup(pwmChannel, pwmFreq, pwmResolution);
-  ledcAttachPin(motorPin, pwmChannel);
-
+  ledcAttach(motorPin, pwmFreq, pwmResolution);
   prevMicros = micros(); // 時間計測初期化
 }
 
