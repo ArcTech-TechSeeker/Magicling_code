@@ -1,7 +1,6 @@
 #include <Wire.h>                       // I2C通信を行うための標準ライブラリ
 #include <Adafruit_BNO055.h>             // BNO055 9軸センサ用ライブラリ
 #include <utility/imumaths.h>            // ベクトルやクォータニオン演算用のユーティリティ
-#include <M5Unified.h>                   // M5Stack Core2 用の統合ライブラリ
 #include <BluetoothSerial.h>
 BluetoothSerial SerialBT; // Bluetooth SPP通信用
 
@@ -10,6 +9,8 @@ BluetoothSerial SerialBT; // Bluetooth SPP通信用
 // 引数: センサID(任意), I2Cアドレス
 Adafruit_BNO055 bno(55, 0x29);
 
+const int LED_PIN = 5;
+
 //1P,2Pの指定
 String name = "1P";
 //String name = "2P";
@@ -17,7 +18,7 @@ String name = "1P";
 // PWM設定
 const int motorPin = 25;     // 振動モータの制御ピン（GPIO25）
 const int pwmChannel = 0;    // PWMチャンネル番号（0〜15）
-const int pwmFreq = 200;     // PWM周波数（Hz）※振動モータは低めでOK
+const int pwmFreq = 2000;     // PWM周波数（Hz）※振動モータは低めでOK
 const int pwmResolution = 8; // 分解能（8bit -> 0〜255）
 
 int in = 0, in0 = 0;           // シリアル入力値（前回値と現在値）
@@ -149,8 +150,8 @@ void updateAttackKey() {
 }
 
 void updaterollandpitch(){
-  pitch = normalize180(euler.y());
-  roll = normalize180(euler.z());
+  pitch = normalize180(euler.z());
+  roll = normalize180(euler.y());
 }
 
 
@@ -199,42 +200,6 @@ void updatespell() {
     // 条件を満たさなければリセット
     pitchStartTime = 0;
     spell = 0;
-  }
-}
-
-// ==== 画面表示更新 ====
-// 状態に応じた背景色・文字色設定と表示
-void updateDisplay() {
-  if (attack == 1) {
-    M5.Display.setTextColor(WHITE, RED);
-    M5.Display.fillScreen(RED);
-  } else if (protect == 1) {
-    M5.Display.fillScreen(BLUE);
-  } else if (attack_key == 1) {
-    M5.Display.fillScreen(BLACK);
-    M5.Display.setTextSize(7);
-    M5.Display.setTextColor(RED, BLACK);
-    M5.Display.setCursor(0, M5.Display.height()/2 - 20);
-    M5.Display.printf("%d", (int)attack_yaw);
-  }else if (spell == 1){
-    M5.Display.fillScreen(YELLOW);
-  } else {
-    // 背景が黒のとき「1P」を中央に表示
-    M5.Display.fillScreen(BLACK);
-    M5.Display.setTextSize(7);
-    M5.Display.setTextColor(WHITE, BLACK);
-    int16_t x = (M5.Display.width() - 7 * 6 * 2) / 2;
-    int16_t y = M5.Display.height() / 2 - 20;
-    M5.Display.setCursor(x, y);
-    M5.Display.print(name);
-  }
-
-  if (jump == 1) {
-    M5.Display.fillScreen(GREEN);
-    M5.Display.setTextSize(7);
-    M5.Display.setTextColor(WHITE, GREEN);
-    M5.Display.setCursor(0, M5.Display.height()/2 - 20);
-    M5.Display.printf("%d", (int)yaw);
   }
 }
 
@@ -307,45 +272,21 @@ void outputDataAsBytes() {
 // ハードウェア初期化、BNO055設定、M5Stack画面初期化
 void setup() {
   Serial.begin(115200);
-  SerialBT.begin("M5Core2_" + name);   // Bluetoothデバイス名
+  SerialBT.begin(("LOLIN32_Lite_" + name).c_str());
   Serial.println("Bluetooth SPP start");
-  Wire.begin(32, 33);
+  Wire.begin(23, 19);
   Wire.setTimeOut(100);
+
+  pinMode(LED_PIN, OUTPUT);
 
   if (!bno.begin()) {
     Serial.println("BNO055接続失敗");
-
-    // 画面にエラー表示
-    M5.Display.setCursor(20, M5.Display.height() / 2 - 20);
-    M5.Display.println("Sensor Error!");
-    M5.Display.setCursor(20, M5.Display.height() / 2 + 20);
-    M5.Display.println("Check BNO055");
     while (1); // 無限ループで停止
   }
   delay(100);
   bno.setExtCrystalUse(true);            // 外部水晶振動子使用
   bno.setMode(OPERATION_MODE_NDOF);      // 9軸融合モード
   
-
-  // M5Unifiedの設定オブジェクトを取得（デフォルト設定を読み込む）
-  auto cfg = M5.config();
-  // M5Stack Core2 の初期化（cfg の設定値に基づいて LCD やタッチパネル、I2C 等を初期化）
-  M5.begin(cfg);
-  // LCDのバックライト輝度を設定（0〜255、ここでは200）
-  M5.Display.setBrightness(200);
-  // LCD画面を黒色で塗りつぶす（TFT_BLACK は黒を表す定数）
-  M5.Display.fillScreen(TFT_BLACK);
-
-  // 起動時に中央に「1P」を表示（背景黒）
-  M5.Display.fillScreen(BLACK);
-  M5.Display.setTextSize(7);
-  M5.Display.setTextColor(WHITE, BLACK);
-  int16_t x = (M5.Display.width() - 7 * 6 * 2) / 2;  // 文字幅に基づいて中央計算（文字サイズ7だと約14px幅）
-  int16_t y = M5.Display.height() / 2 - 20;
-  M5.Display.setCursor(x, y);
-  M5.Display.print("name");
-
-
   // PWM初期化
   ledcSetup(pwmChannel, pwmFreq, pwmResolution);
   ledcAttachPin(motorPin, pwmChannel);
@@ -359,6 +300,8 @@ void loop() {
   // 経過時間（秒）を計算（今回は未使用だが処理間隔確認に使える）
   float dt = (micros() - prevMicros) / 1e6;
   prevMicros = micros();
+
+  digitalWrite(LED_PIN, HIGH); //LED点灯
 
   readSensors(); // センサー読み込み＆LPF適用
   if (isnan(linAcc.x()) || isnan(quat.w()) || isnan(euler.x())) {
@@ -382,7 +325,6 @@ void loop() {
   updatespell();                                  // 攻撃キー更新
   updateJumpCompensation(sqrt(ax_global*ax_global + ay_global*ay_global)); // ジャンプ補正
   Vibration(ax_global, ay_global, az_global);
-  updateDisplay(); // 状態に応じた画面更新
   // Bluetooth通信で情報の送信
   outputDataAsBytes();
 
