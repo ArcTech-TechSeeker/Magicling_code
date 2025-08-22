@@ -4,12 +4,27 @@
 #include <BluetoothSerial.h>
 BluetoothSerial SerialBT; // Bluetooth SPP通信用
 
+#if defined(ARDUINO_ARCH_ESP32)
+  #include <Arduino.h>
+  // ESP32 Arduino コアのメジャーバージョンで分岐
+  #if ESP_ARDUINO_VERSION_MAJOR >= 3
+    #define PWM_INIT(pin,freq,res,chan)  ledcAttach((pin),(freq),(res))
+    #define PWM_WRITE(pin,chan,value)    ledcWrite((pin),(value))
+  #else
+    #define PWM_INIT(pin,freq,res,chan)  do{ ledcSetup((chan),(freq),(res)); ledcAttachPin((pin),(chan)); }while(0)
+    #define PWM_WRITE(pin,chan,value)    ledcWrite((chan),(value))
+  #endif
+#else
+  #error "This sketch is for ESP32 only."
+#endif
+
+
 
 // ==== BNO055センサのインスタンス生成 ====
 // 引数: センサID(任意), I2Cアドレス
 Adafruit_BNO055 bno(55, 0x29);
 
-const int LED_PIN = 5;
+const int LED_PIN = 22;
 
 //1P,2Pの指定
 String name = "1P";
@@ -17,8 +32,9 @@ String name = "1P";
 
 // PWM設定
 const int motorPin = 25;     // 振動モータの制御ピン（GPIO25））
-const int pwmFreq = 2000;     // PWM周波数（Hz）※振動モータは低めでOK
+const int pwmFreq = 200;     // PWM周波数（Hz）※振動モータは低めでOK
 const int pwmResolution = 8; // 分解能（8bit -> 0〜255）
+const int pwmChannel = 0;  
 
 int in = 0, in0 = 0;           // シリアル入力値（前回値と現在値）
 int l = 0;                     // メインループカウンタ
@@ -32,8 +48,8 @@ float ax_f = 0, ay_f = 0, az_f = 0;      // ローパス適用後の加速度
 int protect = 0, attack = 0, spell = 0;
 
 // ==== 攻撃・防御の判定閾値 ====
-float protect_wall = 1;                  // Z軸加速度で防御と判定する閾値
-float attack_wall = 1.2;                  // XY平面の加速度で攻撃と判定する閾値
+float protect_wall = 15;                  // Z軸加速度で防御と判定する閾値
+float attack_wall = 1.5;                  // XY平面の加速度で攻撃と判定する閾値
 
 // ==== Yaw（ヨー角）関連変数 ====
 // yaw: 表示用Yaw角（補正適用後）
@@ -46,7 +62,7 @@ float attack_yaw = 0, yaw_offset = 0;
 
 //roll:ロール角
 //pitch:ピッチ角
-float roll = 0, pitch = 0;
+float roll = 0, pitch = 0, pitch_pre = 0;
 
 // ==== ジャンプ（急激なYaw変化）検出用変数 ====
 // jump: ジャンプ状態フラグ
@@ -56,8 +72,14 @@ float roll = 0, pitch = 0;
 int jump = 0, jump_prev = 0, j = 0, j_wall = 2;
 
 // ==== 攻撃キー状態 ====
-int attack_key = 0, prev_attack = 0;
+int attack_key = 0, prev_attack = 0, attack_total_wall = 10, attack_total = 0;
 unsigned long attack_key_start = 0;      // 攻撃キーが押された時刻（ms）
+
+// ==== 攻撃キー状態 ====
+int protect_key = 0, protect_total = 0;
+unsigned long protect_key_start = 0;      // 攻撃キーが押された時刻（ms）
+
+int key = 0, prev_key = 0;
 
 // ==== 時間計測用変数 ====
 unsigned long prevMicros = 0;            // 前回のループ開始時刻（µs）
@@ -119,15 +141,25 @@ void calcGlobalAcceleration(float &ax_global, float &ay_global, float &az_global
 // グローバル加速度から攻撃・防御フラグを更新
 void detectAttackProtect(float ax_global, float ay_global, float az_global) {
   float axy_pure = sqrt(ax_global * ax_global + ay_global * ay_global);
-  if (az_global > protect_wall || axy_pure > attack_wall) {
-    if (az_global > axy_pure) {
-      protect = 1; if (protect + attack == 2) protect = 0;
-    } else {
-      attack = 1; if (protect + attack == 2) attack = 0;
-    }
-  } else if (fabs(az_global) < protect_wall - 0.3 && fabs(axy_pure) < attack_wall - 0.3) {
-    attack = 0; protect = 0;
+  float a_pure = sqrt(ax_global * ax_global + ay_global * ay_global + az_global * az_global);
+  float v_pitch = pitch - pitch_pre;
+  if (a_pure > attack_wall + 1){
+    key = 1;
+  }else if (a_pure > attack_wall){
+    key = 0; 
   }
+  if (axy_pure > attack_wall) {
+    attack = 1;
+  }else if (axy_pure < attack_wall){
+    attack = 0;
+  }
+  if (v_pitch > protect_wall) {
+    protect = 1; 
+  } else if (v_pitch > protect_wall) {
+    protect = 0; 
+  }
+  protect_total += protect;
+  attack_total += attack;
 }
 
 // ==== 攻撃キー更新 ====
@@ -135,20 +167,39 @@ void detectAttackProtect(float ax_global, float ay_global, float az_global) {
 // 500ms 経過後に自動で 0 に戻す
 void updateAttackKey() {
   // 前回攻撃中だったが今回は攻撃解除 → イベント検出
-  if (prev_attack - attack == 1) {
-    attack_key = 1;
-    attack_yaw = yaw;               // 攻撃終了時のYaw角を記録
-    attack_key_start = millis();    // 記録時刻
+  if (prev_key - key == 1) {
+    if (protect_total > 15){
+      if (attack_total > attack_total_wall) {
+        attack_key = 1; // 攻撃キーを立てる
+        attack_yaw = yaw;               // 攻撃終了時のYaw角を記録
+        attack_key_start = millis();    // 記録時刻
+      } else {
+        protect_key = 1; // 防御キーを立てる
+        protect_key_start = millis();    // 記録時刻
+      }
+      attack_total = 0; // リセット
+      protect_total = 0; // リセット
+    }else{
+      attack_key = 1; // 攻撃キーを立てる
+      attack_total = 0; // リセット
+      protect_total = 0; // リセット
+    }
   }
   // attack_keyが立っている状態で500ms経過したら解除
   if (attack_key == 1 && millis() - attack_key_start >= 500) {
     attack_key = 0;
   }
+  // protect_keyが立っている状態で500ms経過したら解除
+  if (protect_key == 1 && millis() - protect_key_start >= 500) {
+    protect_key = 0;
+  }
   // 次回比較用に攻撃状態を保存
-  prev_attack = attack;
+  // prev_attack = attack;
+  prev_key = key;
 }
 
 void updaterollandpitch(){
+  pitch_pre = pitch;
   pitch = normalize180(euler.z());
   roll = normalize180(euler.y());
 }
@@ -184,9 +235,10 @@ void updateJumpCompensation(float axy_pure) {
   yaw_prev = yaw_raw;
 }
 
-void updatespell() {
+void updatespell(float ax_global, float ay_global, float az_global) {
+  float a_pure = sqrt(ax_global * ax_global + ay_global * ay_global + az_global * az_global);
   // pitchが80度以上ならタイマー開始
-  if (abs(pitch) >= 70) {
+  if (abs(pitch) >= 60 && a_pure < 1.5) {
     // まだタイマーをスタートしていなければ開始時刻を記録
     if (pitchStartTime == 0) {
       pitchStartTime = millis();
@@ -229,7 +281,7 @@ void Vibration(float ax_global, float ay_global, float az_global) {
     else if (vib < 10) vib = 0;
 
     // PWM出力で振動モータを駆動
-    ledcWrite(motorPin, vib);
+    PWM_WRITE(motorPin, pwmChannel, vib);
   }else {
     int flashRate = 0;
     float flashRate_deno = 0; 
@@ -238,7 +290,7 @@ void Vibration(float ax_global, float ay_global, float az_global) {
     else if (in == '3') {flashRate = 80; flashRate_deno = 0.125;}
     else if (in == '4') {flashRate = 100; flashRate_deno = 0.9;}
     bool motorOn = (l % flashRate < flashRate * flashRate_deno);
-    ledcWrite(motorPin, motorOn ? 255 : 0);
+    PWM_WRITE(motorPin, pwmChannel, motorOn ? 255 : 0);
   }
 }
 
@@ -247,7 +299,7 @@ void Vibration(float ax_global, float ay_global, float az_global) {
 // ===============================
 void outputDataAsBytes() {
   // 送る値を int16_t に変換（整数化）
-  int16_t protect_to_send    = (int16_t)protect;                // 1 or 0
+  int16_t protect_to_send    = (int16_t)protect_key;                // 1 or 0
   int16_t spell_to_send      = (int16_t)spell;                  // 1 or 0
   int16_t spell2_to_send      = (int16_t)attack;                  // 1 or 0
   int16_t attack_key_to_send = (int16_t)attack_key;              // 1 or 0
@@ -271,7 +323,7 @@ void outputDataAsBytes() {
 // ハードウェア初期化、BNO055設定、M5Stack画面初期化
 void setup() {
   Serial.begin(115200);
-  SerialBT.begin(("LOLIN32_Lite_" + name).c_str());
+  SerialBT.begin("LOLIN32_Lite_" + name);
   Serial.println("Bluetooth SPP start");
   Wire.begin(23, 19);
   Wire.setTimeOut(100);
@@ -287,7 +339,8 @@ void setup() {
   bno.setMode(OPERATION_MODE_NDOF);      // 9軸融合モード
   
   // PWM初期化
-  ledcAttach(motorPin, pwmFreq, pwmResolution);
+  PWM_INIT(motorPin, pwmFreq, pwmResolution, pwmChannel);
+  digitalWrite(LED_PIN, LOW); //LED点灯
   prevMicros = micros(); // 時間計測初期化
 }
 
@@ -297,8 +350,6 @@ void loop() {
   // 経過時間（秒）を計算（今回は未使用だが処理間隔確認に使える）
   float dt = (micros() - prevMicros) / 1e6;
   prevMicros = micros();
-
-  digitalWrite(LED_PIN, HIGH); //LED点灯
 
   readSensors(); // センサー読み込み＆LPF適用
   if (isnan(linAcc.x()) || isnan(quat.w()) || isnan(euler.x())) {
@@ -317,9 +368,9 @@ void loop() {
   float ax_global, ay_global, az_global;
   updaterollandpitch();
   calcGlobalAcceleration(ax_global, ay_global, az_global); // グローバル加速度算出
-  detectAttackProtect(ax_global, ay_global, az_global);     // 攻撃・防御判定
-  updateAttackKey();      
-  updatespell();                                  // 攻撃キー更新
+  detectAttackProtect(ax_global, ay_global, az_global);    // 攻撃・防御判定
+  updateAttackKey();                                       // 攻撃キー・防御キー更新 
+  updatespell(ax_global, ay_global, az_global);                                  // 詠唱キー更新
   updateJumpCompensation(sqrt(ax_global*ax_global + ay_global*ay_global)); // ジャンプ補正
   Vibration(ax_global, ay_global, az_global);
   // Bluetooth通信で情報の送信
