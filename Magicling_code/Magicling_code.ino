@@ -27,8 +27,8 @@ Adafruit_BNO055 bno(55, 0x29);
 const int LED_PIN = 22;
 
 //1P,2Pの指定
-String name = "1P";
-//String name = "2P";
+//String name = "1P";
+String name = "2P";
 
 // PWM設定
 const int motorPin = 25;     // 振動モータの制御ピン（GPIO25））
@@ -297,25 +297,27 @@ void Vibration(float ax_global, float ay_global, float az_global) {
 // ===============================
 // データ送信（シリアル通信）
 // ===============================
-void outputDataAsBytes() {
-  // 送る値を int16_t に変換（整数化）
-  int16_t protect_to_send    = (int16_t)protect_key;                // 1 or 0
-  int16_t spell_to_send      = (int16_t)spell;                  // 1 or 0
-  int16_t spell2_to_send      = (int16_t)attack;                  // 1 or 0
-  int16_t attack_key_to_send = (int16_t)attack_key;              // 1 or 0
-  int16_t attack_yaw_to_send = (int16_t)(attack_yaw * 10.0f);    // 0.1刻み
+// Send six float values as fixed-point (1 decimal) int16 over Bluetooth
+// ax_global, ay_global, az_global, pitch, yaw, yaw_raw -> each *10 -> int16
+void outputDataAsBytes(float ax_global, float ay_global, float az_global, float pitch_val, float yaw_val, float roll_val) {
+  int16_t ax_to_send  = (int16_t)roundf(ax_global * 100.0f);
+  int16_t ay_to_send  = (int16_t)roundf(ay_global * 100.0f);
+  int16_t az_to_send  = (int16_t)roundf(az_global * 100.0f);
+  int16_t pitch_to_send = (int16_t)roundf(pitch_val * 10.0f);
+  int16_t yaw_to_send  = (int16_t)roundf(yaw_val * 10.0f);
+  int16_t roll_to_send = (int16_t)roundf(roll_val * 10.0f);
 
-  // バッファ作成
-  uint8_t buffer[sizeof(int16_t) * 5];
-  memcpy(buffer,                           &protect_to_send,    sizeof(int16_t));
-  memcpy(buffer + 1 * sizeof(int16_t),     &spell_to_send,      sizeof(int16_t));
-  memcpy(buffer + 2 * sizeof(int16_t),     &spell2_to_send,      sizeof(int16_t));
-  memcpy(buffer + 3 * sizeof(int16_t),     &attack_key_to_send, sizeof(int16_t));
-  memcpy(buffer + 4 * sizeof(int16_t),     &attack_yaw_to_send, sizeof(int16_t));
+  // Buffer for six int16 values
+  uint8_t buffer[sizeof(int16_t) * 6];
+  memcpy(buffer + 0 * sizeof(int16_t), &ax_to_send, sizeof(int16_t));
+  memcpy(buffer + 1 * sizeof(int16_t), &ay_to_send, sizeof(int16_t));
+  memcpy(buffer + 2 * sizeof(int16_t), &az_to_send, sizeof(int16_t));
+  memcpy(buffer + 3 * sizeof(int16_t), &pitch_to_send, sizeof(int16_t));
+  memcpy(buffer + 4 * sizeof(int16_t), &yaw_to_send, sizeof(int16_t));
+  memcpy(buffer + 5 * sizeof(int16_t), &roll_to_send, sizeof(int16_t));
 
-  // 送信
-  SerialBT.write('S');                     // ヘッダ
-  SerialBT.write(buffer, sizeof(buffer));  // 本文
+  SerialBT.write('S');                     // header
+  SerialBT.write(buffer, sizeof(buffer));  // payload
 }
 
 
@@ -373,8 +375,8 @@ void loop() {
   updatespell(ax_global, ay_global, az_global);                                  // 詠唱キー更新
   updateJumpCompensation(sqrt(ax_global*ax_global + ay_global*ay_global)); // ジャンプ補正
   Vibration(ax_global, ay_global, az_global);
-  // Bluetooth通信で情報の送信
-  outputDataAsBytes();
+  // Bluetooth通信で情報の送信（ax,ay,az,pitch,yaw,roll を1桁固定小数で送る）
+  outputDataAsBytes(ax_global, ay_global, az_global, pitch, yaw, roll);
 
   // ループカウンタ更新（4000を超えたら1に戻す）
   l++;
