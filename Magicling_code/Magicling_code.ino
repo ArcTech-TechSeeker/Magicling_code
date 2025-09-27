@@ -36,7 +36,7 @@ const int pwmFreq = 200;     // PWM周波数（Hz）※振動モータは低め�
 const int pwmResolution = 8; // 分解能（8bit -> 0〜255）
 const int pwmChannel = 0;  
 
-int in = 0, in0 = 0;           // シリアル入力値（前回値と現在値）
+int in = '0', in0 = '0';           // シリアル入力値（前回値と現在値） 初期値は'0'
 int l = 0;                     // メインループカウンタ
 
 // ==== ローパスフィルタ用変数 ====
@@ -264,7 +264,8 @@ void Vibration(float ax_global, float ay_global, float az_global) {
     in = in0;
   }
 
-  if(in == 0){
+  // '0' が送られてきたらアナログ振動モード
+  if(in == '0'){
     // グローバル座標系での加速度ベクトルの大きさ（重力込み）を計算
     // √(ax^2 + ay^2 + az^2) → 全方向の加速度の合成値
     float a_pure = sqrt(ax_global * ax_global +
@@ -282,23 +283,29 @@ void Vibration(float ax_global, float ay_global, float az_global) {
 
     // PWM出力で振動モータを駆動
     PWM_WRITE(motorPin, pwmChannel, vib);
-  }else {
+  } else {
     int flashRate = 0;
     float flashRate_deno = 0; 
-    if (in == '1') {flashRate = 20; flashRate_deno = 0.4;} 
-    else if (in == '2') {flashRate = 40; flashRate_deno = 0.2;}
-    else if (in == '3') {flashRate = 80; flashRate_deno = 0.125;}
+    if (in == '1') {flashRate = 20;  flashRate_deno = 0.4;} 
+    else if (in == '2') {flashRate = 40;  flashRate_deno = 0.2;}
+    else if (in == '3') {flashRate = 80;  flashRate_deno = 0.125;}
     else if (in == '4') {flashRate = 100; flashRate_deno = 0.9;}
-    bool motorOn = (l % flashRate < flashRate * flashRate_deno);
-    PWM_WRITE(motorPin, pwmChannel, motorOn ? 255 : 0);
+    // '5' またはその他は安全に停止（flashRate=0のまま）
+    if (flashRate > 0) {
+      bool motorOn = (l % flashRate < (int)(flashRate * flashRate_deno));
+      PWM_WRITE(motorPin, pwmChannel, motorOn ? 255 : 0);
+    } else {
+      PWM_WRITE(motorPin, pwmChannel, 0);
+    }
   }
 }
 
 // ===============================
 // データ送信（シリアル通信）
 // ===============================
-// Send six float values as fixed-point (1 decimal) int16 over Bluetooth
-// ax_global, ay_global, az_global, pitch, yaw, yaw_raw -> each *10 -> int16
+// Send six values over Bluetooth:
+//  - Accel ax, ay, az as fixed-point (2 decimals): value * 100 -> int16
+//  - Angles pitch, yaw, roll as fixed-point (1 decimal): value * 10 -> int16
 void outputDataAsBytes(float ax_global, float ay_global, float az_global, float pitch_val, float yaw_val, float roll_val) {
   int16_t ax_to_send  = (int16_t)roundf(ax_global * 100.0f);
   int16_t ay_to_send  = (int16_t)roundf(ay_global * 100.0f);
