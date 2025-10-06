@@ -1,48 +1,48 @@
 {
-    "folders": [
-        {
-            "path": "."
-        }
-    ],
-    "settings": {
-        "arduino.path": "C:\\Program Files\\Arduino CLI",
-        "arduino.commandPath": "arduino-cli.exe",
-        "arduino.useArduinoCli": true,
-        "files.associations": {
-            "cmath": "cpp",
-            "complex": "cpp",
-            "random": "cpp"
-        }
-    },
-    "launch": {
-        "version": "0.2.0",
-        "configurations": [
-            {
-                "name": "Build and Upload M5Stack-Core2",
-                "type": "node-terminal",
-                "request": "launch",
-                "command": "cmd /c '\"C:\\Program Files\\Arduino CLI\\arduino-cli.exe\" compile --fqbn esp32:esp32:m5stack-core2 Magicling_code && \"C:\\Program Files\\Arduino CLI\\arduino-cli.exe\" upload --fqbn esp32:esp32:m5stack-core2 -p COM4 Magicling_code'"
-            }
-        ]
-    },
-    "tasks": {
-        "version": "2.0.0",
-        "tasks": [
-            {
-                "label": "Arduino CLI: Upload",
-                "type": "shell",
-                "command": "\"C:\\Program Files\\Arduino CLI\\arduino-cli.exe\" compile --fqbn esp32:esp32:m5stack-core2 Magicling_code && \"C:\\Program Files\\Arduino CLI\\arduino-cli.exe\" upload --fqbn esp32:esp32:m5stack-core2 -p COM4 Magicling_code",
-                "options": {
-                    "shell": {
-                        "executable": "cmd.exe"
-                    }
-                },
-                "group": {
-                    "kind": "build",
-                    "isDefault": true
-                },
-                "problemMatcher": []
-            }
-        ]
+  "folders": [
+    {
+      "path": "."
     }
+  ],
+  "settings": {
+    "arduino.path": "C:\\Program Files\\Arduino CLI",
+    "arduino.commandPath": "arduino-cli.exe",
+    "arduino.useArduinoCli": true,
+    "files.associations": {
+      "cmath": "cpp",
+      "complex": "cpp",
+      "random": "cpp"
+    }
+  },
+  "launch": {
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Build and Upload Lolin32 Lite",
+        "type": "node-terminal",
+        "request": "launch",
+        "command": "cmd.exe /c \"\"C:\\Program Files\\Arduino CLI\\arduino-cli.exe\" compile --fqbn esp32:esp32:lolin32 . && \"C:\\Program Files\\Arduino CLI\\arduino-cli.exe\" upload --fqbn esp32:esp32:lolin32 -p COM11 .\""
+      }
+    ]
+  },
+  "tasks": {
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "Arduino CLI: Upload (Lolin32 Lite)",
+        "type": "shell",
+        "command": "cmd.exe /c \"\"C:\\Program Files\\Arduino CLI\\arduino-cli.exe\" compile --fqbn esp32:esp32:lolin32 . && \"C:\\Program Files\\Arduino CLI\\arduino-cli.exe\" upload --fqbn esp32:esp32:lolin32 -p COM11 .\"",
+        "options": {
+          "shell": {
+            "executable": "cmd.exe"
+          }
+        },
+        "group": {
+          "kind": "build",
+          "isDefault": true
+        },
+        "problemMatcher": []
+      }
+    ]
+  }
 }
