@@ -127,8 +127,36 @@ void calcGlobalAcceleration(float &ax_global, float &ay_global, float &az_global
 void updaterollandpitch()
 {
   pitch_pre = pitch;
-  pitch = normalize180(euler.z());
-  roll = normalize180(euler.y());
+
+  // クォータニオンから回転行列を生成
+  float qw = quat.w(), qx = quat.x(), qy = quat.y(), qz = quat.z();
+  float R[3][3] = {
+      {1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)},
+      {2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)},
+      {2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)}};
+
+  // ZYX（yaw-pitch-roll）系の式で roll/pitch を算出
+  // roll（X軸回り）は非中間角のため -180..180 を取り得る
+  float r21 = R[2][1]; // R[3][2]
+  float r22 = R[2][2]; // R[3][3]
+  float r20 = R[2][0]; // R[3][1]
+
+  // roll = atan2(R32, R33) [deg]
+  pitch = atan2f(r21, r22) * 180.0f / PI;
+
+  // pitch = atan2(-R31, sqrt(R32^2 + R33^2)) [deg]
+  // asin よりも数値的に安定（ゼロ割れや誤差増幅を抑制）
+  float denom = sqrtf(r21 * r21 + r22 * r22);
+  roll = atan2f(-r20, denom) * 180.0f / PI;
+
+  // 表示範囲を整える
+  roll = -normalize180(roll);
+  pitch = -normalize180(pitch);
+
+  if (abs(roll) >= 90)
+  {
+    pitch = pitch - 180;
+  }
 }
 
 // ==== ジャンプ検出と補正 ====
