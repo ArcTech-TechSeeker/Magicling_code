@@ -1,0 +1,413 @@
+EESchema Schematic File Version 4
+EELAYER 30 0
+EELAYER END
+$Descr A4 11693 8268
+encoding utf-8
+Sheet 1 1
+Title ""
+Date ""
+Rev ""
+Comp ""
+Comment1 ""
+Comment2 ""
+Comment3 ""
+Comment4 ""
+$EndDescr
+$Comp
+L MCU_Module:Arduino_Nano_Every Arduino_nano_33_ble1
+U 1 1 6764F5AA
+P 1700 1900
+F 0 "Arduino_nano_33_ble1" H 1700 811 50  0000 C CNN
+F 1 "Arduino_Nano_Every" H 1700 720 50  0000 C CNN
+F 2 "Module:Arduino_Nano" H 1700 1900 50  0001 C CIN
+F 3 "https://content.arduino.cc/assets/NANOEveryV3.0_sch.pdf" H 1700 1900 50  0001 C CNN
+	1    1700 1900
+	1    0    0    -1  
+$EndComp
+$Comp
+L Connector:Conn_01x02_Female Bending_Senser1
+U 1 1 67651049
+P 4100 2100
+F 0 "Bending_Senser1" H 4128 2076 50  0000 L CNN
+F 1 "Conn_01x02_Female" H 4128 1985 50  0000 L CNN
+F 2 "Connector_PinSocket_2.54mm:PinSocket_1x02_P2.54mm_Vertical" H 4100 2100 50  0001 C CNN
+F 3 "~" H 4100 2100 50  0001 C CNN
+	1    4100 2100
+	1    0    0    -1  
+$EndComp
+$Comp
+L Motor:Motor_DC Motor1
+U 1 1 67651830
+P 4000 2850
+F 0 "Motor1" H 4158 2846 50  0000 L CNN
+F 1 "Motor_DC" H 4158 2755 50  0000 L CNN
+F 2 "Connector_PinSocket_2.54mm:PinSocket_1x02_P2.54mm_Vertical" H 4000 2760 50  0001 C CNN
+F 3 "~" H 4000 2760 50  0001 C CNN
+	1    4000 2850
+	1    0    0    -1  
+$EndComp
+$Comp
+L Device:R R2
+U 1 1 67652657
+P 5400 3050
+F 0 "R2" H 5470 3096 50  0000 L CNN
+F 1 "R" H 5470 3005 50  0000 L CNN
+F 2 "Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal" V 5330 3050 50  0001 C CNN
+F 3 "~" H 5400 3050 50  0001 C CNN
+	1    5400 3050
+	1    0    0    -1  
+$EndComp
+$Comp
+L Device:R R1
+U 1 1 67652CAA
+P 3800 2350
+F 0 "R1" H 3870 2396 50  0000 L CNN
+F 1 "R" H 3870 2305 50  0000 L CNN
+F 2 "Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal" V 3730 2350 50  0001 C CNN
+F 3 "~" H 3800 2350 50  0001 C CNN
+	1    3800 2350
+	1    0    0    -1  
+$EndComp
+$Comp
+L Transistor_BJT:2SC1815 2SC1815
+U 1 1 67653586
+P 5100 2900
+F 0 "2SC1815" H 5290 2946 50  0000 L CNN
+F 1 "2SC1815" H 5290 2855 50  0000 L CNN
+F 2 "Package_TO_SOT_THT:TO-92_Inline_Wide" H 5300 2825 50  0001 L CIN
+F 3 "https://media.digikey.com/pdf/Data%20Sheets/Toshiba%20PDFs/2SC1815.pdf" H 5100 2900 50  0001 L CNN
+	1    5100 2900
+	-1   0    0    1   
+$EndComp
+$Comp
+L Diode:1N4007 1N4007
+U 1 1 67653ACC
+P 3550 2900
+F 0 "1N4007" V 3504 2980 50  0000 L CNN
+F 1 "1N4007" V 3595 2980 50  0000 L CNN
+F 2 "Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal" H 3550 2725 50  0001 C CNN
+F 3 "http://www.vishay.com/docs/88503/1n4001.pdf" H 3550 2900 50  0001 C CNN
+	1    3550 2900
+	0    -1   -1   0   
+$EndComp
+$Comp
+L pspice:0 #GND0101
+U 1 1 676549B1
+P 1700 3000
+F 0 "#GND0101" H 1700 2900 50  0001 C CNN
+F 1 "0" H 1700 3089 50  0000 C CNN
+F 2 "" H 1700 3000 50  0001 C CNN
+F 3 "~" H 1700 3000 50  0001 C CNN
+	1    1700 3000
+	1    0    0    -1  
+$EndComp
+Wire Wire Line
+	1700 3000 1700 2900
+$Comp
+L power:+3.3VADC #PWR0101
+U 1 1 6765521E
+P 1800 850
+F 0 "#PWR0101" H 1950 800 50  0001 C CNN
+F 1 "+3.3VADC" H 1815 1023 50  0000 C CNN
+F 2 "" H 1800 850 50  0001 C CNN
+F 3 "" H 1800 850 50  0001 C CNN
+	1    1800 850 
+	1    0    0    -1  
+$EndComp
+Wire Wire Line
+	1800 900  1800 850 
+$Comp
+L Connector:Conn_01x06_Female Bluetooth1
+U 1 1 67655BA6
+P 4100 1450
+F 0 "Bluetooth1" H 4128 1426 50  0000 L CNN
+F 1 "Conn_01x06_Female" H 4128 1335 50  0000 L CNN
+F 2 "Connector_PinSocket_2.54mm:PinSocket_1x06_P2.54mm_Vertical" H 4100 1450 50  0001 C CNN
+F 3 "~" H 4100 1450 50  0001 C CNN
+	1    4100 1450
+	1    0    0    -1  
+$EndComp
+$Comp
+L pspice:0 #GND0102
+U 1 1 67656499
+P 3750 1550
+F 0 "#GND0102" H 3750 1450 50  0001 C CNN
+F 1 "0" V 3750 1594 50  0000 L CNN
+F 2 "" H 3750 1550 50  0001 C CNN
+F 3 "~" H 3750 1550 50  0001 C CNN
+	1    3750 1550
+	0    1    1    0   
+$EndComp
+$Comp
+L power:+3.3VADC #PWR0102
+U 1 1 676566EB
+P 3750 1650
+F 0 "#PWR0102" H 3900 1600 50  0001 C CNN
+F 1 "+3.3VADC" V 3765 1777 50  0000 L CNN
+F 2 "" H 3750 1650 50  0001 C CNN
+F 3 "" H 3750 1650 50  0001 C CNN
+	1    3750 1650
+	0    -1   -1   0   
+$EndComp
+$Comp
+L Connector:Conn_01x03_Female DCDC_convertor1
+U 1 1 67656BC1
+P 4100 950
+F 0 "DCDC_convertor1" H 4128 976 50  0000 L CNN
+F 1 "Conn_01x03_Female" H 4128 885 50  0000 L CNN
+F 2 "Connector_PinSocket_2.54mm:PinSocket_1x03_P2.54mm_Vertical" H 4100 950 50  0001 C CNN
+F 3 "~" H 4100 950 50  0001 C CNN
+	1    4100 950 
+	1    0    0    -1  
+$EndComp
+$Comp
+L pspice:0 #GND0103
+U 1 1 6765746A
+P 3750 950
+F 0 "#GND0103" H 3750 850 50  0001 C CNN
+F 1 "0" V 3750 994 50  0000 L CNN
+F 2 "" H 3750 950 50  0001 C CNN
+F 3 "~" H 3750 950 50  0001 C CNN
+	1    3750 950 
+	0    1    1    0   
+$EndComp
+$Comp
+L power:+3.3VADC #PWR0103
+U 1 1 67657976
+P 3750 1050
+F 0 "#PWR0103" H 3900 1000 50  0001 C CNN
+F 1 "+3.3VADC" V 3765 1177 50  0000 L CNN
+F 2 "" H 3750 1050 50  0001 C CNN
+F 3 "" H 3750 1050 50  0001 C CNN
+	1    3750 1050
+	0    -1   -1   0   
+$EndComp
+$Comp
+L power:+3V0 #PWR0104
+U 1 1 67657CDD
+P 3750 850
+F 0 "#PWR0104" H 3750 700 50  0001 C CNN
+F 1 "+3V0" V 3765 978 50  0000 L CNN
+F 2 "" H 3750 850 50  0001 C CNN
+F 3 "" H 3750 850 50  0001 C CNN
+	1    3750 850 
+	0    -1   -1   0   
+$EndComp
+$Comp
+L pspice:0 #GND0104
+U 1 1 67658AD7
+P 3750 2100
+F 0 "#GND0104" H 3750 2000 50  0001 C CNN
+F 1 "0" V 3750 2144 50  0000 L CNN
+F 2 "" H 3750 2100 50  0001 C CNN
+F 3 "~" H 3750 2100 50  0001 C CNN
+	1    3750 2100
+	0    1    1    0   
+$EndComp
+$Comp
+L power:+3.3VADC #PWR0105
+U 1 1 67659535
+P 3750 2500
+F 0 "#PWR0105" H 3900 2450 50  0001 C CNN
+F 1 "+3.3VADC" V 3765 2627 50  0000 L CNN
+F 2 "" H 3750 2500 50  0001 C CNN
+F 3 "" H 3750 2500 50  0001 C CNN
+	1    3750 2500
+	0    -1   -1   0   
+$EndComp
+Wire Wire Line
+	3550 2750 3550 2650
+Wire Wire Line
+	3550 2650 4000 2650
+Wire Wire Line
+	3550 3050 3550 3150
+Wire Wire Line
+	3550 3150 4000 3150
+Wire Wire Line
+	4000 3150 5000 3150
+Wire Wire Line
+	5000 3150 5000 3100
+Connection ~ 4000 3150
+$Comp
+L pspice:0 #GND0105
+U 1 1 6765BF91
+P 5000 2600
+F 0 "#GND0105" H 5000 2500 50  0001 C CNN
+F 1 "0" H 5000 2689 50  0000 C CNN
+F 2 "" H 5000 2600 50  0001 C CNN
+F 3 "~" H 5000 2600 50  0001 C CNN
+	1    5000 2600
+	-1   0    0    1   
+$EndComp
+$Comp
+L power:+3.3VADC #PWR0106
+U 1 1 6765C259
+P 3450 2650
+F 0 "#PWR0106" H 3600 2600 50  0001 C CNN
+F 1 "+3.3VADC" V 3465 2777 50  0000 L CNN
+F 2 "" H 3450 2650 50  0001 C CNN
+F 3 "" H 3450 2650 50  0001 C CNN
+	1    3450 2650
+	0    -1   -1   0   
+$EndComp
+Wire Wire Line
+	3450 2650 3550 2650
+Connection ~ 3550 2650
+Wire Wire Line
+	5000 2700 5000 2600
+Wire Wire Line
+	5300 2900 5400 2900
+Wire Wire Line
+	3800 2200 3900 2200
+Wire Wire Line
+	3750 2500 3800 2500
+Wire Wire Line
+	3750 2100 3900 2100
+Wire Wire Line
+	3750 1650 3900 1650
+Wire Wire Line
+	3750 1550 3900 1550
+Wire Wire Line
+	3750 850  3850 850 
+Wire Wire Line
+	3750 950  3900 950 
+Wire Wire Line
+	3750 1050 3900 1050
+Text GLabel 5400 3200 3    50   Output ~ 0
+D9
+Text GLabel 3650 2200 0    50   Output ~ 0
+A7
+Wire Wire Line
+	3800 2200 3650 2200
+Connection ~ 3800 2200
+Text GLabel 3750 1450 0    50   Output ~ 0
+TX
+Text GLabel 3750 1350 0    50   Output ~ 0
+RX
+Wire Wire Line
+	3900 1450 3750 1450
+Wire Wire Line
+	3900 1350 3750 1350
+Text GLabel 1200 2100 0    50   Input ~ 0
+D9
+Text GLabel 1200 1200 0    50   Input ~ 0
+TX
+Text GLabel 1200 1100 0    50   Input ~ 0
+RX
+Text GLabel 2200 2600 2    50   Input ~ 0
+A7
+NoConn ~ 3900 1750
+NoConn ~ 3900 1250
+NoConn ~ 1600 900 
+NoConn ~ 1900 900 
+NoConn ~ 2200 1300
+NoConn ~ 2200 1400
+NoConn ~ 2200 1700
+NoConn ~ 2200 1900
+NoConn ~ 2200 2000
+NoConn ~ 2200 2100
+NoConn ~ 2200 2200
+NoConn ~ 2200 2300
+NoConn ~ 2200 2400
+NoConn ~ 2200 2500
+NoConn ~ 1200 2600
+NoConn ~ 1200 2500
+NoConn ~ 1200 2400
+NoConn ~ 1200 2200
+NoConn ~ 1200 2000
+NoConn ~ 1200 1900
+NoConn ~ 1200 1800
+NoConn ~ 1200 1700
+NoConn ~ 1200 1600
+NoConn ~ 1200 1500
+NoConn ~ 1200 1400
+$Comp
+L Mechanical:MountingHole H1
+U 1 1 67666DD3
+P 3400 3600
+F 0 "H1" H 3500 3646 50  0000 L CNN
+F 1 "MountingHole" H 3500 3555 50  0000 L CNN
+F 2 "MountingHole:MountingHole_3.2mm_M3" H 3400 3600 50  0001 C CNN
+F 3 "~" H 3400 3600 50  0001 C CNN
+	1    3400 3600
+	1    0    0    -1  
+$EndComp
+$Comp
+L Mechanical:MountingHole H2
+U 1 1 676673A1
+P 4150 3600
+F 0 "H2" H 4250 3646 50  0000 L CNN
+F 1 "MountingHole" H 4250 3555 50  0000 L CNN
+F 2 "MountingHole:MountingHole_3.2mm_M3" H 4150 3600 50  0001 C CNN
+F 3 "~" H 4150 3600 50  0001 C CNN
+	1    4150 3600
+	1    0    0    -1  
+$EndComp
+$Comp
+L power:PWR_FLAG #FLG0101
+U 1 1 676678CE
+P 3700 700
+F 0 "#FLG0101" H 3700 775 50  0001 C CNN
+F 1 "PWR_FLAG" V 3700 827 50  0000 L CNN
+F 2 "" H 3700 700 50  0001 C CNN
+F 3 "~" H 3700 700 50  0001 C CNN
+	1    3700 700 
+	0    -1   -1   0   
+$EndComp
+Wire Wire Line
+	3700 700  3850 700 
+Wire Wire Line
+	3850 700  3850 850 
+Connection ~ 3850 850 
+Wire Wire Line
+	3850 850  3900 850 
+$Comp
+L Connector:Conn_01x02_Female Power1
+U 1 1 67677A5C
+P 4100 1850
+F 0 "Power1" H 4128 1826 50  0000 L CNN
+F 1 "Conn_01x02_Female" H 4128 1735 50  0000 L CNN
+F 2 "Connector_PinSocket_2.54mm:PinSocket_1x02_P2.54mm_Vertical" H 4100 1850 50  0001 C CNN
+F 3 "~" H 4100 1850 50  0001 C CNN
+	1    4100 1850
+	1    0    0    -1  
+$EndComp
+$Comp
+L power:+3V0 #PWR0107
+U 1 1 67677E99
+P 3900 1850
+F 0 "#PWR0107" H 4050 1800 50  0001 C CNN
+F 1 "+3V0" V 3915 1977 50  0000 L CNN
+F 2 "" H 3900 1850 50  0001 C CNN
+F 3 "" H 3900 1850 50  0001 C CNN
+	1    3900 1850
+	0    -1   -1   0   
+$EndComp
+$Comp
+L pspice:0 #GND0106
+U 1 1 6767837D
+P 3900 1950
+F 0 "#GND0106" H 3900 1850 50  0001 C CNN
+F 1 "0" V 3900 1994 50  0000 L CNN
+F 2 "" H 3900 1950 50  0001 C CNN
+F 3 "~" H 3900 1950 50  0001 C CNN
+	1    3900 1950
+	0    1    1    0   
+$EndComp
+$Comp
+L power:PWR_FLAG #FLG?
+U 1 1 6767C95C
+P 3700 600
+F 0 "#FLG?" H 3700 675 50  0001 C CNN
+F 1 "PWR_FLAG" V 3700 727 50  0000 L CNN
+F 2 "" H 3700 600 50  0001 C CNN
+F 3 "~" H 3700 600 50  0001 C CNN
+	1    3700 600 
+	0    -1   -1   0   
+$EndComp
+Wire Wire Line
+	3900 600  3700 600 
+Connection ~ 3900 950 
+Wire Wire Line
+	3900 600  3900 950 
+$EndSCHEMATC
