@@ -44,6 +44,13 @@ BLECharacteristic *pHapticCharacteristic = NULL;
 bool deviceConnected = false;
 uint8_t seqNumber = 0; // シーケンス番号（0-255で循環）
 
+// ==== コールバッククラス内で使用するグローバル変数の前置き宣言 ====
+// （クラス定義がグローバル変数宣言より前にあるため必要）
+extern unsigned long lastNotifyTime;
+extern bool haptic_active;
+extern const int motorPin;
+extern const int pwmChannel;
+
 // BLE接続状態管理クラス
 class MyServerCallbacks : public BLEServerCallbacks
 {
@@ -104,6 +111,13 @@ uint8_t haptic_strength = 0;
 uint8_t haptic_duration = 0;
 unsigned long haptic_start_time = 0;
 bool haptic_active = false;
+
+// ==== 加速度ベースの触覚フィードバック用変数 ====
+bool accel_haptic_enabled = true;          // 加速度ベースの振動有効フラグ
+const float ACCEL_HAPTIC_THRESHOLD = 0.1f; // 加速度ベースの振動開始閾値
+const int ACCEL_HAPTIC_MAX = 250;          // 加速度ベースの振動最大値
+const int ACCEL_HAPTIC_MIN = 10;           // 加速度ベースの振動最小値
+const float ACCEL_HAPTIC_SCALE = 40.0f;    // 加速度スケーリング係数
 
 // タイマ送信用変数
 unsigned long lastNotifyTime = 0;
@@ -288,8 +302,49 @@ void handleHapticCommand(uint8_t strength, uint8_t duration)
   }
 }
 
+// ==== 加速度ベースの触覚フィードバック処理 ====
+// 加速度ベクトルの大きさに基づいて振動強度を計算
+// 通信側からのコマンド実行中は加速度ベースの振動をスキップ（割り込み）
+void updateAccelerationHaptic(float ax_global, float ay_global, float az_global)
+{
+  // 通信側からの触覚コマンド実行中は加速度ベースの振動をスキップ
+  if (haptic_active)
+  {
+    return;
+  }
+
+  if (!accel_haptic_enabled)
+  {
+    PWM_WRITE(motorPin, pwmChannel, 0);
+    return;
+  }
+
+  // グローバル座標系での加速度ベクトルの大きさを計算
+  float a_magnitude = sqrt(ax_global * ax_global +
+                           ay_global * ay_global +
+                           az_global * az_global);
+
+  // 閾値以下は振動なし
+  if (a_magnitude < ACCEL_HAPTIC_THRESHOLD)
+  {
+    PWM_WRITE(motorPin, pwmChannel, 0);
+    return;
+  }
+
+  // 加速度を振動強度に変換（スケーリング係数を適用）
+  int vib_strength = (int)(a_magnitude * ACCEL_HAPTIC_SCALE);
+
+  // 上限・下限クリッピング
+  if (vib_strength > ACCEL_HAPTIC_MAX)
+    vib_strength = ACCEL_HAPTIC_MAX;
+  else if (vib_strength < ACCEL_HAPTIC_MIN)
+    vib_strength = 0;
+
+  PWM_WRITE(motorPin, pwmChannel, vib_strength);
+}
+
 // ==== 触覚フィードバック更新 ====
-// duration経過後に自動停止
+// duration経過後に自動停止し、加速度ベースの振動に戻す
 void updateHapticFeedback()
 {
   if (haptic_active)
@@ -299,9 +354,10 @@ void updateHapticFeedback()
 
     if (elapsed >= duration_ms)
     {
-      // 振動停止
+      // 触覚コマンド終了
       PWM_WRITE(motorPin, pwmChannel, 0);
       haptic_active = false;
+      Serial.println("触覚コマンド完了");
     }
   }
 }
@@ -445,6 +501,9 @@ void loop()
 
   // 触覚フィードバック更新（duration経過チェック）
   updateHapticFeedback();
+
+  // 加速度ベースの触覚フィードバック更新（通信側コマンド実行中は割り込まれる）
+  updateAccelerationHaptic(ax_global, ay_global, az_global);
 
   // 60Hz送信（16.67ms周期）
   unsigned long currentTime = micros();
