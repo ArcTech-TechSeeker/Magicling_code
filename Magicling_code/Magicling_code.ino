@@ -1,12 +1,14 @@
 #include <Wire.h>             // I2C通信を行うための標準ライブラリ
 #include <Adafruit_BNO055.h>  // BNO055 9軸センサ用ライブラリ
 #include <utility/imumaths.h> // ベクトルやクォータニオン演算用のユーティリティ
-#include <BluetoothSerial.h>
-BluetoothSerial SerialBT; // Bluetooth SPP通信用
+#include <BLEDevice.h>        // BLE通信用
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
 
 #if defined(ARDUINO_ARCH_ESP32)
 #include <Arduino.h>
-                          // ESP32 Arduino コアのメジャーバージョンで分岐
+// ESP32 Arduino コアのメジャーバージョンで分岐
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
 #define PWM_INIT(pin, freq, res, chan) ledcAttach((pin), (freq), (res))
 #define PWM_WRITE(pin, chan, value) ledcWrite((pin), (value))
@@ -27,9 +29,57 @@ BluetoothSerial SerialBT; // Bluetooth SPP通信用
 // 引数: センサID(任意), I2Cアドレス
 Adafruit_BNO055 bno(55, 0x29);
 
+// ==== 関数プロトタイプ宣言 ====
+void handleHapticCommand(uint8_t strength, uint8_t duration);
+
+// ==== BLE設定 ====
+// UUIDは16進数の文字列として定義（実装で確定）
+#define SERVICE_UUID "12345678-1234-1234-1234-123456789abc"
+#define SENSOR_CHAR_UUID "12345678-1234-1234-1234-123456789abd"
+#define HAPTIC_CHAR_UUID "12345678-1234-1234-1234-123456789abe"
+
+BLEServer *pServer = NULL;
+BLECharacteristic *pSensorCharacteristic = NULL;
+BLECharacteristic *pHapticCharacteristic = NULL;
+bool deviceConnected = false;
+uint8_t seqNumber = 0; // シーケンス番号（0-255で循環）
+
+// BLE接続状態管理クラス
+class MyServerCallbacks : public BLEServerCallbacks
+{
+  void onConnect(BLEServer *pServer)
+  {
+    deviceConnected = true;
+    Serial.println("BLE接続確立");
+  }
+
+  void onDisconnect(BLEServer *pServer)
+  {
+    deviceConnected = false;
+    Serial.println("BLE切断");
+    // 自動で再アドバタイジング開始
+    BLEDevice::startAdvertising();
+  }
+};
+
+// 触覚コマンド受信時のコールバック
+class HapticCallbacks : public BLECharacteristicCallbacks
+{
+  void onWrite(BLECharacteristic *pCharacteristic)
+  {
+    std::string value = pCharacteristic->getValue();
+    if (value.length() == 2)
+    {
+      uint8_t strength = (uint8_t)value[0];
+      uint8_t duration = (uint8_t)value[1];
+      handleHapticCommand(strength, duration);
+    }
+  }
+};
+
 const int LED_PIN = 22;
 
-// 1P,2Pの指定
+// 1P,2Pの指定（BLE移行後は不要だが互換性のため残す）
 String name = "1P";
 // String name = "2P";
 
@@ -39,8 +89,17 @@ const int pwmFreq = 200;     // PWM周波数（Hz）※振動モータは低め�
 const int pwmResolution = 8; // 分解能（8bit -> 0〜255）
 const int pwmChannel = 0;
 
-int in = '0', in0 = '0'; // シリアル入力値（前回値と現在値） 初期値は'0'
-int l = 0;               // メインループカウンタ
+// 触覚フィードバック制御用変数
+uint8_t haptic_strength = 0;
+uint8_t haptic_duration = 0;
+unsigned long haptic_start_time = 0;
+bool haptic_active = false;
+
+// タイマ送信用変数
+unsigned long lastNotifyTime = 0;
+const unsigned long NOTIFY_INTERVAL_US = 16667; // 16.67ms = 60Hz
+
+int l = 0; // メインループカウンタ
 
 // ==== ローパスフィルタ用変数 ====
 // alpha: 過去データの残す割合（0.0〜1.0）
@@ -197,110 +256,59 @@ void updateJumpCompensation(float axy_pure)
   yaw_prev = yaw_raw;
 }
 
-// 加速度ベクトルの大きさに基づいて振動モータを制御する関数
-void Vibration(float ax_global, float ay_global, float az_global)
+// ==== 触覚コマンド処理 ====
+// BLE経由で受信した2バイトコマンドを処理
+void handleHapticCommand(uint8_t strength, uint8_t duration)
 {
-  in0 = in;
-  // 入力チェック: Bluetooth優先、なければUSB Serial
-  if (SerialBT.available() > 0)
+  haptic_strength = strength;
+  haptic_duration = duration;
+  haptic_start_time = millis();
+  haptic_active = (strength > 0 && duration > 0);
+
+  Serial.printf("触覚コマンド: strength=%d, duration=%dms\n", strength, duration * 10);
+
+  // 即座に振動開始
+  if (haptic_active)
   {
-    in = SerialBT.read();
-  }
-  else if (Serial.available() > 0)
-  {
-    in = Serial.read();
-  }
-  else
-  {
-    in = in0;
-  }
-
-  // '5' が来たらその時点のYawを0にするようにオフセットを更新
-  if (in == '5')
-  {
-    // 最新センサー値からyaw_rawを再計算して確実に最新を使用
-    yaw_raw = normalize180(euler.x());
-    // 表示角 yaw = normalize180(yaw_raw - yaw_offset) が 0 になるように設定
-    yaw_offset = yaw_raw;
-    // ジャンプ状態をクリアし、直ちに反映
-    jump = 0;
-    j = 0;
-    saved_yaw = yaw_raw;
-    yaw = 0;
-  }
-
-  // 想定外の文字は無視して直前の値に戻す
-  if (in < '0' || in > '5')
-    in = in0;
-
-  // '0' が送られてきたらアナログ振動モード
-  if (in == '0')
-  {
-    // グローバル座標系での加速度ベクトルの大きさ（重力込み）を計算
-    // √(ax^2 + ay^2 + az^2) → 全方向の加速度の合成値
-    float a_pure = sqrt(ax_global * ax_global +
-                        ay_global * ay_global +
-                        az_global * az_global);
-
-    // 加速度の値を 3 乗して感度を調整し、スケーリング係数300を掛けて PWM 値に変換
-    // 3乗することで小さい加速度変化に対して感度を下げ、大きい加速度で急に強くなるカーブになる
-    int vib = a_pure * 40;
-
-    // 上限値を 250 に制限（PWM 8bit の最大255に近い値）
-    if (vib > 250)
-      vib = 250;
-    // 下限閾値60未満はモータ停止（物理的に動かない領域をカット）
-    else if (vib < 10)
-      vib = 0;
-
-    // PWM出力で振動モータを駆動
-    PWM_WRITE(motorPin, pwmChannel, vib);
+    PWM_WRITE(motorPin, pwmChannel, strength);
   }
   else
   {
-    int flashRate = 0;
-    float flashRate_deno = 0;
-    if (in == '1')
+    PWM_WRITE(motorPin, pwmChannel, 0);
+  }
+}
+
+// ==== 触覚フィードバック更新 ====
+// duration経過後に自動停止
+void updateHapticFeedback()
+{
+  if (haptic_active)
+  {
+    unsigned long elapsed = millis() - haptic_start_time;
+    unsigned long duration_ms = haptic_duration * 10; // 10ms単位→ms変換
+
+    if (elapsed >= duration_ms)
     {
-      flashRate = 20;
-      flashRate_deno = 0.4;
-    }
-    else if (in == '2')
-    {
-      flashRate = 40;
-      flashRate_deno = 0.2;
-    }
-    else if (in == '3')
-    {
-      flashRate = 80;
-      flashRate_deno = 0.125;
-    }
-    else if (in == '4')
-    {
-      flashRate = 100;
-      flashRate_deno = 0.9;
-    }
-    // '5' またはその他は安全に停止（flashRate=0のまま）
-    if (flashRate > 0)
-    {
-      bool motorOn = (l % flashRate < (int)(flashRate * flashRate_deno));
-      PWM_WRITE(motorPin, pwmChannel, motorOn ? 255 : 0);
-    }
-    else
-    {
+      // 振動停止
       PWM_WRITE(motorPin, pwmChannel, 0);
+      haptic_active = false;
     }
   }
 }
 
 // ===============================
-// データ送信（シリアル通信）
+// データ送信（BLE GATT Notify）
 // ===============================
-// Send six values over Bluetooth:
-//  - Accel ax, ay, az as fixed-point (2 decimals): value * 100 -> int16
-//  - Angles pitch, yaw, roll as fixed-point (1 decimal): value * 10 -> int16
-void outputDataAsBytes(float ax_global, float ay_global, float az_global, float pitch_val, float yaw_val, float roll_val)
+// 15バイト固定長フレームを送信
+// [header(1), seq(1), ax(2), ay(2), az(2), pitch(2), yaw(2), roll(2), flags(1)]
+void outputDataAsNotify(float ax_global, float ay_global, float az_global, float pitch_val, float yaw_val, float roll_val)
 {
+  if (!deviceConnected || pSensorCharacteristic == NULL)
+  {
+    return; // 未接続時は送信しない
+  }
+
+  // 固定小数点化
   int16_t ax_to_send = (int16_t)roundf(ax_global * 100.0f);
   int16_t ay_to_send = (int16_t)roundf(ay_global * 100.0f);
   int16_t az_to_send = (int16_t)roundf(az_global * 100.0f);
@@ -308,31 +316,36 @@ void outputDataAsBytes(float ax_global, float ay_global, float az_global, float 
   int16_t yaw_to_send = (int16_t)roundf(yaw_val * 10.0f);
   int16_t roll_to_send = (int16_t)roundf(roll_val * 10.0f);
 
-  // Buffer for six int16 values
-  uint8_t buffer[sizeof(int16_t) * 6];
-  memcpy(buffer + 0 * sizeof(int16_t), &ax_to_send, sizeof(int16_t));
-  memcpy(buffer + 1 * sizeof(int16_t), &ay_to_send, sizeof(int16_t));
-  memcpy(buffer + 2 * sizeof(int16_t), &az_to_send, sizeof(int16_t));
-  memcpy(buffer + 3 * sizeof(int16_t), &pitch_to_send, sizeof(int16_t));
-  memcpy(buffer + 4 * sizeof(int16_t), &yaw_to_send, sizeof(int16_t));
-  memcpy(buffer + 5 * sizeof(int16_t), &roll_to_send, sizeof(int16_t));
+  // 15バイトバッファ構築
+  uint8_t buffer[15];
+  buffer[0] = 0x53; // header 'S'
+  buffer[1] = seqNumber++;
+  memcpy(&buffer[2], &ax_to_send, 2);
+  memcpy(&buffer[4], &ay_to_send, 2);
+  memcpy(&buffer[6], &az_to_send, 2);
+  memcpy(&buffer[8], &pitch_to_send, 2);
+  memcpy(&buffer[10], &yaw_to_send, 2);
+  memcpy(&buffer[12], &roll_to_send, 2);
+  buffer[14] = 0x00; // flags（予約、MVP では0）
 
-  SerialBT.write('S');                    // header
-  SerialBT.write(buffer, sizeof(buffer)); // payload
+  // BLE Notify送信
+  pSensorCharacteristic->setValue(buffer, 15);
+  pSensorCharacteristic->notify();
 }
 
 // ==== セットアップ処理 ====
-// ハードウェア初期化、BNO055設定、M5Stack画面初期化
+// ハードウェア初期化、BNO055設定、BLE設定
 void setup()
 {
   Serial.begin(115200);
-  SerialBT.begin("LOLIN32_Lite_" + name);
-  Serial.println("Bluetooth SPP start");
+  Serial.println("AR陰陽師グローブコントローラ起動");
+
   Wire.begin(23, 19);
   Wire.setTimeOut(100);
 
   pinMode(LED_PIN, OUTPUT);
 
+  // BNO055初期化
   if (!bno.begin())
   {
     Serial.println("BNO055接続失敗");
@@ -345,27 +358,63 @@ void setup()
 
   // PWM初期化
   PWM_INIT(motorPin, pwmFreq, pwmResolution, pwmChannel);
+
+  // BLE初期化
+  String deviceName = "ARONMYOJI_GLOVE";
+  BLEDevice::init(deviceName.c_str());
+
+  // BLE Server作成
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+
+  // BLE Service作成
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+
+  // Sensor Notify Characteristic作成（Notify専用）
+  pSensorCharacteristic = pService->createCharacteristic(
+      SENSOR_CHAR_UUID,
+      BLECharacteristic::PROPERTY_NOTIFY);
+  pSensorCharacteristic->addDescriptor(new BLE2902());
+
+  // Haptics Write Characteristic作成（Write Without Response推奨）
+  pHapticCharacteristic = pService->createCharacteristic(
+      HAPTIC_CHAR_UUID,
+      BLECharacteristic::PROPERTY_WRITE_NR | BLECharacteristic::PROPERTY_WRITE);
+  pHapticCharacteristic->setCallbacks(new HapticCallbacks());
+
+  // Service開始
+  pService->start();
+
+  // アドバタイジング設定
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->setMinPreferred(0x06); // iPhoneとの接続最適化
+  pAdvertising->setMinPreferred(0x12);
+  BLEDevice::startAdvertising();
+
+  Serial.println("BLEアドバタイジング開始: " + deviceName);
   digitalWrite(LED_PIN, LOW); // LED点灯
   prevMicros = micros();      // 時間計測初期化
+  lastNotifyTime = micros();
 }
 
 // ==== メインループ ====
-// 各処理関数を順番に呼び出して動作
+// センサー読み取りと60Hz Notify送信
 void loop()
 {
-  // 経過時間（秒）を計算（今回は未使用だが処理間隔確認に使える）
+  // 経過時間（秒）を計算
   float dt = (micros() - prevMicros) / 1e6;
   prevMicros = micros();
 
-  readSensors(); // センサー読み込み＆LPF適用
+  // センサー読み込み＆LPF適用
+  readSensors();
   if (isnan(linAcc.x()) || isnan(quat.w()) || isnan(euler.x()))
   {
     Serial.println("読み取り失敗 → スキップ");
     delay(10);
-    // 再取得
     readSensors();
 
-    // まだダメなら加速度0として続行
     if (isnan(linAcc.x()) || isnan(quat.w()) || isnan(euler.x()))
     {
       Serial.println("再試行失敗 → デフォルト値で続行");
@@ -377,18 +426,28 @@ void loop()
 
   float ax_global, ay_global, az_global;
   updaterollandpitch();
-  calcGlobalAcceleration(ax_global, ay_global, az_global);                     // グローバル加速度算出
-  updateJumpCompensation(sqrt(ax_global * ax_global + ay_global * ay_global)); // ジャンプ補正
-  Vibration(ax_global, ay_global, az_global);
-  // Bluetooth通信で情報の送信（ax,ay,az,pitch,yaw,roll を1桁固定小数で送る）
-  outputDataAsBytes(ax_global, ay_global, az_global, pitch, yaw, roll);
+  calcGlobalAcceleration(ax_global, ay_global, az_global);
+  updateJumpCompensation(sqrt(ax_global * ax_global + ay_global * ay_global));
 
-  // ループカウンタ更新（4000を超えたら1に戻す）
+  // 触覚フィードバック更新（duration経過チェック）
+  updateHapticFeedback();
+
+  // 60Hz送信（16.67ms周期）
+  unsigned long currentTime = micros();
+  if (currentTime - lastNotifyTime >= NOTIFY_INTERVAL_US)
+  {
+    lastNotifyTime = currentTime;
+    outputDataAsNotify(ax_global, ay_global, az_global, pitch, yaw, roll);
+  }
+
+  // ループカウンタ更新
   l++;
   if (l > 4000)
     l = 1;
 
-  // デバッグ用に加速度・Yaw値をシリアル出力
+  // デバッグ用シリアル出力（必要に応じて）
   // Serial.printf("%.3f,%.3f,%.3f \n", ax_f, euler.x(), yaw);
-  delay(10); // CPU負荷低減
+
+  // CPU負荷低減（タイマ駆動のため短縮可能）
+  delay(1);
 }
