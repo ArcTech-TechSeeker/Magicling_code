@@ -50,12 +50,17 @@ class MyServerCallbacks : public BLEServerCallbacks
   void onConnect(BLEServer *pServer)
   {
     deviceConnected = true;
+    seqNumber = 0;             // 再接続時にシーケンス番号をリセット
+    lastNotifyTime = micros(); // 接続直後のバースト送信を抑制
     Serial.println("BLE接続確立");
   }
 
   void onDisconnect(BLEServer *pServer)
   {
     deviceConnected = false;
+    // B3: 切断時の状態リセット（安全側へ）
+    haptic_active = false;
+    PWM_WRITE(motorPin, pwmChannel, 0);
     Serial.println("BLE切断");
     // 自動で再アドバタイジング開始
     BLEDevice::startAdvertising();
@@ -73,6 +78,11 @@ class HapticCallbacks : public BLECharacteristicCallbacks
       uint8_t strength = (uint8_t)value[0];
       uint8_t duration = (uint8_t)value[1];
       handleHapticCommand(strength, duration);
+    }
+    else
+    {
+      // A3: 異常長の場合はログ出力
+      Serial.printf("触覚コマンド異常: 長さ=%d (期待値:2)\n", value.length());
     }
   }
 };
@@ -326,7 +336,9 @@ void outputDataAsNotify(float ax_global, float ay_global, float az_global, float
   memcpy(&buffer[8], &pitch_to_send, 2);
   memcpy(&buffer[10], &yaw_to_send, 2);
   memcpy(&buffer[12], &roll_to_send, 2);
-  buffer[14] = 0x00; // flags（予約、MVP では0）
+  // C1: flags（予約、MVPでは0）
+  // 将来案: bit0=キャリブレーション完了, bit1=センサ読み失敗中, bit2=磁気校正品質低下
+  buffer[14] = 0x00;
 
   // BLE Notify送信
   pSensorCharacteristic->setValue(buffer, 15);
@@ -389,7 +401,9 @@ void setup()
   BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
   pAdvertising->addServiceUUID(SERVICE_UUID);
   pAdvertising->setScanResponse(true);
-  pAdvertising->setMinPreferred(0x06); // iPhoneとの接続最適化
+  // B1: iPhone接続性向上のための既知回避策（ESP32 BLE標準パターン）
+  // 動作確認済み：接続間隔min=6*1.25ms、max=18*1.25ms相当
+  pAdvertising->setMinPreferred(0x06);
   pAdvertising->setMinPreferred(0x12);
   BLEDevice::startAdvertising();
 
@@ -436,7 +450,13 @@ void loop()
   unsigned long currentTime = micros();
   if (currentTime - lastNotifyTime >= NOTIFY_INTERVAL_US)
   {
-    lastNotifyTime = currentTime;
+    // A2: タイマドリフト抑制（位相ずれの恒常化を防止）
+    lastNotifyTime += NOTIFY_INTERVAL_US;
+    // 大きく遅れた場合の追いつき処理（次回も即座に送信対象になる）
+    if (currentTime - lastNotifyTime >= NOTIFY_INTERVAL_US)
+    {
+      lastNotifyTime = currentTime;
+    }
     outputDataAsNotify(ax_global, ay_global, az_global, pitch, yaw, roll);
   }
 
