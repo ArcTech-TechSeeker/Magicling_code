@@ -151,8 +151,169 @@ Magicling_code/
 
 > 実際の構成はリポジトリに従うこと。名称や配置は変更される場合がある。
 
----
 
 ## ライセンス
 
 リポジトリ同梱の **LICENSE** を参照。
+# Magicling_code (Code for nIpxel)
+
+This repository contains the code, circuit data, and CAD resources centered around **nIpxel**, a **wireless controller with motion input and haptics** (ESP32 + BNO055).
+
+It converts orientation/acceleration obtained from a 9-axis sensor into the **world (global) coordinate frame**, transmits the data to a host via **Bluetooth SPP**, and controls a vibration motor using **PWM**.
+
+Project site: https://nipxel.netlify.app/
+
+---
+
+## Features
+
+- **9-axis sensor fusion**: Uses BNO055 (NDOF) to obtain **Yaw / Pitch / Roll** and **linear acceleration**
+- **Coordinate stabilization**: Converts quaternion → rotation matrix to compute **global-frame acceleration**
+- **Jump compensation**: Detects yaw spikes (e.g., magnetic disturbance), briefly freezes + applies an offset for smooth continuity
+- **Haptics**: Drives a vibration motor at **200 Hz / 8-bit PWM** (analog follow / blink patterns)
+- **Lightweight transport**: Periodically sends **fixed-point binary** frames over Bluetooth SPP (**13 B/frame**)
+- **Two-player support**: Switch the device name suffix to `"1P"` / `"2P"`
+
+---
+
+## Architecture
+
+```text
+BNO055 → (I²C) → ESP32 (LoLin32 Lite, etc.)
+         ├─ Quaternion orientation → Rotation matrix → World-frame acceleration
+         ├─ Jump compensation (yaw offset)
+         ├─ Haptics control (PWM)
+         └─ Bluetooth SPP (fixed-point binary) → PC / game
+```
+
+---
+
+## Hardware
+
+- **MCU**: ESP32 (LoLin32 Lite, etc.)
+- **IMU**: Adafruit BNO055 (I²C, address `0x29`)
+- **Motor**: Small vibration motor (low-side NPN drive: 2SC1815)
+- **Base resistor**: **1 kΩ (brown-black-red-gold)**
+- **Flyback diode**: 1N400x, etc. (in parallel across motor terminals, reverse polarity)
+
+### Circuit Data
+
+Circuit data is located in the `Circuit` folder and was created using **KiCad**.
+
+If you want to order a PCB, you can upload the **Gerber ZIP** directly to services such as **JLCPCB**.
+
+### CAD Data
+
+Designed using **Autodesk Inventor**. For 3D printing, use the STL files in the `for 3Dprint` folder.
+
+### Default Pins
+
+| Function        | ESP32 Pin     | Notes               |
+|----------------|---------------|---------------------|
+| I²C SDA        | GPIO **23**   | `Wire.begin(23,19)` |
+| I²C SCL        | GPIO **19**   | same as above       |
+| PWM (motor)    | GPIO **25**   | 200 Hz / 8-bit      |
+| LED            | GPIO **22**   | status indicator    |
+
+> Share 3.3 V / GND. I²C requires 4.7–10 kΩ pull-ups (often included on breakout boards).
+
+---
+
+## Firmware Overview
+
+### Key Libraries
+
+`Wire.h` (I²C), `Adafruit_BNO055.h` (sensor fusion), `utility/imumaths.h` (Quat/matrix), `BluetoothSerial.h` (SPP)
+
+### PWM Compatibility Layer
+
+Absorbs differences between ESP32 Arduino Core v2/v3 using macros (e.g., `ledcSetup/AttachPin` vs `ledcAttach`).
+
+### Sensor Processing Pipeline
+
+1. **Read**: From BNO055: **linear acceleration**, **Euler angles**, **quaternion**
+2. **Smoothing**: First-order IIR on acceleration [g] (`alpha=0.7`)
+3. **Transform**: Quat → 3×3 rotation matrix; local → **world frame**
+4. **Yaw compensation**: If delta > 45° (and < 320°), treat as a “jump”, freeze briefly; apply `yaw_offset` afterward
+
+### Haptics (`Vibration()`)
+
+- **Mode selection**: Send a single-character command via SPP: `'0'..'5'`
+
+  - `'0'`: Analog follow (compute duty from |a| with deadzone and clamp)
+  - `'1'..'4'`: Blink patterns (period × duty)
+  - `'5'`: Stop
+
+---
+
+## Bluetooth SPP Protocol
+
+**1 frame = 13 bytes**
+
+- Header: `'S'` (1 B)
+- Payload: **int16 × 6** (12 B, Little-Endian)
+
+  1. `ax_global × 100` (fixed-point with 2 decimals)
+  2. `ay_global × 100`
+  3. `az_global × 100`
+  4. `pitch × 10` (fixed-point with 1 decimal)
+  5. `yaw × 10`
+  6. `roll × 10`
+
+**Transmit rate**: approx. **100 Hz** (target via `delay(10)`)  
+**Decode (receiver)**: Convert LE `int16` back to float (accel ÷ 100, angles ÷ 10). Use header `'S'` for synchronization.
+
+---
+
+## Build & Flash
+
+### Arduino IDE
+
+1. Board: ESP32 family (LoLin32 Lite, etc.)
+2. Install dependencies (Adafruit BNO055, etc.)
+3. Upload the sketch
+
+### PlatformIO / ESP-IDF
+
+- Build with an environment where `ledc`, `Wire`, and `BluetoothSerial` are available.
+
+---
+
+## Startup & Usage
+
+1. Power on / pair via SPP: device name defaults to `"LOLIN32_Lite_1P"` (set `name` to switch to `"2P"`)
+2. Host continuously receives **13-byte fixed frames** over SPP
+3. Send `'0'..'5'` as needed to switch **haptics modes**
+
+---
+
+## Tunable Parameters
+
+| Variable          | Default  | Description            |
+|------------------|---------:|------------------------|
+| `alpha`          |    0.7   | Low-pass filter weight |
+| `pwmFreq`        | 200 Hz   | Motor drive frequency  |
+| `pwmResolution`  |  8 bit   | PWM duty resolution    |
+| `j_wall`         | 2 loops  | Yaw freeze duration    |
+| `name`           | `"1P"`   | SPP name suffix        |
+
+---
+
+## Repository Layout (Example)
+
+```text
+Magicling_code/
+├── src/                # ESP32 sketch/source
+├── include/            # headers
+├── hardware/           # schematics/wiring
+└── README.md
+```
+
+> Follow the actual repository structure. Names and locations may change.
+
+---
+
+## License
+
+See the **LICENSE** file included in this repository.
+
