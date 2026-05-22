@@ -317,3 +317,42 @@ Magicling_code/
 
 See the **LICENSE** file included in this repository.
 
+---
+
+## BLE OTA
+
+The firmware exposes the same BLE OTA protocol as
+`naka6ryo/RemoteCompilerToMicon` WebAppSide, without adding Wi-Fi
+provisioning.
+
+* BLE device name during the first 10 seconds after boot:
+  `ESP32-nIpxel_1P` or `ESP32-nIpxel_2P`
+* OTA service: `9f5f0001-8d9e-6f4e-bd0c-3c4d5e6f7180`
+* Control: `START:<size>`, `END`, `ABORT`
+* Data: binary firmware chunks
+* Status: `READY`, `PROGRESS:x/y`, `SUCCESS`, `ERROR:*`
+
+Use an ESP32 partition scheme with OTA slots. The VS Code/Arduino CLI settings
+use `PartitionScheme=min_spiffs`, which gives the OTA app slot 1,966,080 bytes.
+The PlatformIO settings use `partitions_ota_2m.csv`, matching the referenced
+BLE OTA project.
+
+## Game BLE Service
+
+The device also exposes the game-facing BLE service used by
+`BleControllerAdapter.js`.
+
+* BLE device name after the OTA pairing window: `nIpxel_1P` or `nIpxel_2P`
+* Service: `12345678-1234-1234-1234-123456789abc`
+* Sensor Notify: `12345678-1234-1234-1234-123456789abd`
+* Haptic Write: `12345678-1234-1234-1234-123456789abe`
+* Sensor frame: 15 bytes, `S` + sequence byte + six little-endian `int16` values + flags byte
+* Haptic command: 2 bytes, `strength` and `duration` in 10 ms units
+
+Arduino CLI build outputs are written to the workspace-local `build/` folder.
+
+BLE advertising is mode-switched to keep Web Bluetooth filters reliable:
+the first 10 seconds after boot advertise only the OTA service, and then the
+device advertises only the game service. If an OTA client connects during that
+initial window, OTA mode is kept active while connected.
+

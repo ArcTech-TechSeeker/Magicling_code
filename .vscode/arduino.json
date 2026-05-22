@@ -2,6 +2,6 @@
     "sketch": "Magicling_code/Magicling_code.ino",
     "board": "esp32:esp32:lolin32",
     "port": "COM11",
-    "output": "../build",
-    "configuration": "PSRAM=enabled,PartitionScheme=default,CPUFreq=240,FlashMode=dio,FlashFreq=80,FlashSize=16MB,UploadSpeed=115200,DebugLevel=none"
+    "output": "build",
+    "configuration": "PSRAM=enabled,PartitionScheme=min_spiffs,CPUFreq=240,FlashMode=dio,FlashFreq=80,FlashSize=16MB,UploadSpeed=921600,DebugLevel=none"
 }

@@ -2,6 +2,12 @@
 #include <Adafruit_BNO055.h>  // BNO055 9軸センサ用ライブラリ
 #include <utility/imumaths.h> // ベクトルやクォータニオン演算用のユーティリティ
 #include <BluetoothSerial.h>
+#include <Update.h>
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+#include <esp_gap_ble_api.h>
 BluetoothSerial SerialBT; // Bluetooth SPP通信用
 
 #if defined(ARDUINO_ARCH_ESP32)
@@ -30,14 +36,60 @@ Adafruit_BNO055 bno(55, 0x29);
 const int LED_PIN = 22;
 
 // 1P,2Pの指定
-String name = "1P";
-// String name = "2P";
+// String name = "1P";
+String name = "2p";
 
 // PWM設定
 const int motorPin = 25;     // 振動モータの制御ピン（GPIO25））
 const int pwmFreq = 200;     // PWM周波数（Hz）※振動モータは低めでOK
 const int pwmResolution = 8; // 分解能（8bit -> 0〜255）
 const int pwmChannel = 0;
+
+// BLE OTA UUIDs: compatible with RemoteCompilerToMicon WebAppSide.
+#define DEBUG_SERVICE_UUID "7f3f0001-6b7c-4f2e-9b8a-1a2b3c4d5e6f"
+#define DEBUG_LOG_TX_UUID "7f3f0002-6b7c-4f2e-9b8a-1a2b3c4d5e6f"
+#define DEBUG_CMD_RX_UUID "7f3f0003-6b7c-4f2e-9b8a-1a2b3c4d5e6f"
+#define DEBUG_STAT_UUID "7f3f0005-6b7c-4f2e-9b8a-1a2b3c4d5e6f"
+#define OTA_SERVICE_UUID "9f5f0001-8d9e-6f4e-bd0c-3c4d5e6f7180"
+#define OTA_CONTROL_UUID "9f5f0002-8d9e-6f4e-bd0c-3c4d5e6f7180"
+#define OTA_DATA_UUID "9f5f0003-8d9e-6f4e-bd0c-3c4d5e6f7180"
+#define OTA_STATUS_UUID "9f5f0004-8d9e-6f4e-bd0c-3c4d5e6f7180"
+#define GAME_SERVICE_UUID "12345678-1234-1234-1234-123456789abc"
+#define GAME_SENSOR_CHAR_UUID "12345678-1234-1234-1234-123456789abd"
+#define GAME_HAPTIC_CHAR_UUID "12345678-1234-1234-1234-123456789abe"
+
+BLEServer *otaServer = nullptr;
+BLECharacteristic *debugLogCharacteristic = nullptr;
+BLECharacteristic *debugStatCharacteristic = nullptr;
+BLECharacteristic *otaStatusCharacteristic = nullptr;
+BLECharacteristic *gameSensorCharacteristic = nullptr;
+enum BlePairingMode
+{
+  BLE_PAIRING_OTA,
+  BLE_PAIRING_GAME,
+};
+BlePairingMode blePairingMode = BLE_PAIRING_OTA;
+bool bleClientConnected = false;
+bool bleOtaConnected = false;
+bool otaPairingLocked = false;
+bool otaModeActive = false;
+bool otaInProgress = false;
+bool otaFinalizeRequested = false;
+bool otaAbortRequested = false;
+size_t otaExpectedSize = 0;
+size_t otaReceivedSize = 0;
+size_t otaLastReportedSize = 0;
+unsigned long otaModeStartedMs = 0;
+unsigned long otaLastActivityMs = 0;
+const unsigned long OTA_MODE_TIMEOUT_MS = 60000;
+const unsigned long OTA_TRANSFER_IDLE_TIMEOUT_MS = 30000;
+const unsigned long OTA_PAIRING_WINDOW_MS = 10000;
+const unsigned long GAME_NOTIFY_INTERVAL_MS = 20;
+unsigned long lastGameNotifyMs = 0;
+uint8_t directHapticStrength = 0;
+unsigned long directHapticUntilMs = 0;
+bool pwmReady = false;
+uint8_t sensorSequence = 0;
 
 int in = '0', in0 = '0'; // シリアル入力値（前回値と現在値） 初期値は'0'
 int l = 0;               // メインループカウンタ
@@ -200,6 +252,17 @@ void updateJumpCompensation(float axy_pure)
 // 加速度ベクトルの大きさに基づいて振動モータを制御する関数
 void Vibration(float ax_global, float ay_global, float az_global)
 {
+  if (millis() < directHapticUntilMs)
+  {
+    PWM_WRITE(motorPin, pwmChannel, directHapticStrength);
+    return;
+  }
+  else if (directHapticStrength != 0)
+  {
+    directHapticStrength = 0;
+    PWM_WRITE(motorPin, pwmChannel, 0);
+  }
+
   in0 = in;
   // 入力チェック: Bluetooth優先、なければUSB Serial
   if (SerialBT.available() > 0)
@@ -299,7 +362,7 @@ void Vibration(float ax_global, float ay_global, float az_global)
 // Send six values over Bluetooth:
 //  - Accel ax, ay, az as fixed-point (2 decimals): value * 100 -> int16
 //  - Angles pitch, yaw, roll as fixed-point (1 decimal): value * 10 -> int16
-void outputDataAsBytes(float ax_global, float ay_global, float az_global, float pitch_val, float yaw_val, float roll_val)
+void buildSensorPayload(uint8_t *payload, float ax_global, float ay_global, float az_global, float pitch_val, float yaw_val, float roll_val)
 {
   int16_t ax_to_send = (int16_t)roundf(ax_global * 100.0f);
   int16_t ay_to_send = (int16_t)roundf(ay_global * 100.0f);
@@ -308,26 +371,455 @@ void outputDataAsBytes(float ax_global, float ay_global, float az_global, float 
   int16_t yaw_to_send = (int16_t)roundf(yaw_val * 10.0f);
   int16_t roll_to_send = (int16_t)roundf(roll_val * 10.0f);
 
-  // Buffer for six int16 values
-  uint8_t buffer[sizeof(int16_t) * 6];
-  memcpy(buffer + 0 * sizeof(int16_t), &ax_to_send, sizeof(int16_t));
-  memcpy(buffer + 1 * sizeof(int16_t), &ay_to_send, sizeof(int16_t));
-  memcpy(buffer + 2 * sizeof(int16_t), &az_to_send, sizeof(int16_t));
-  memcpy(buffer + 3 * sizeof(int16_t), &pitch_to_send, sizeof(int16_t));
-  memcpy(buffer + 4 * sizeof(int16_t), &yaw_to_send, sizeof(int16_t));
-  memcpy(buffer + 5 * sizeof(int16_t), &roll_to_send, sizeof(int16_t));
+  memcpy(payload + 0 * sizeof(int16_t), &ax_to_send, sizeof(int16_t));
+  memcpy(payload + 1 * sizeof(int16_t), &ay_to_send, sizeof(int16_t));
+  memcpy(payload + 2 * sizeof(int16_t), &az_to_send, sizeof(int16_t));
+  memcpy(payload + 3 * sizeof(int16_t), &pitch_to_send, sizeof(int16_t));
+  memcpy(payload + 4 * sizeof(int16_t), &yaw_to_send, sizeof(int16_t));
+  memcpy(payload + 5 * sizeof(int16_t), &roll_to_send, sizeof(int16_t));
+}
 
-  SerialBT.write('S');                    // header
-  SerialBT.write(buffer, sizeof(buffer)); // payload
+void buildSerialSensorFrame(uint8_t *frame, float ax_global, float ay_global, float az_global, float pitch_val, float yaw_val, float roll_val)
+{
+  frame[0] = 'S';
+  buildSensorPayload(frame + 1, ax_global, ay_global, az_global, pitch_val, yaw_val, roll_val);
+}
+
+void buildGameSensorFrame(uint8_t *frame, float ax_global, float ay_global, float az_global, float pitch_val, float yaw_val, float roll_val)
+{
+  frame[0] = 'S';
+  frame[1] = sensorSequence++;
+  buildSensorPayload(frame + 2, ax_global, ay_global, az_global, pitch_val, yaw_val, roll_val);
+  frame[14] = 0;
+}
+
+void outputDataAsBytes(float ax_global, float ay_global, float az_global, float pitch_val, float yaw_val, float roll_val)
+{
+  uint8_t frame[1 + sizeof(int16_t) * 6];
+  buildSerialSensorFrame(frame, ax_global, ay_global, az_global, pitch_val, yaw_val, roll_val);
+
+  SerialBT.write(frame, sizeof(frame));
+
+  unsigned long nowMs = millis();
+  if (bleOtaConnected && gameSensorCharacteristic && !otaInProgress &&
+      nowMs - lastGameNotifyMs >= GAME_NOTIFY_INTERVAL_MS)
+  {
+    lastGameNotifyMs = nowMs;
+    uint8_t gameFrame[15];
+    buildGameSensorFrame(gameFrame, ax_global, ay_global, az_global, pitch_val, yaw_val, roll_val);
+    gameSensorCharacteristic->setValue(gameFrame, sizeof(gameFrame));
+    gameSensorCharacteristic->notify();
+  }
 }
 
 // ==== セットアップ処理 ====
 // ハードウェア初期化、BNO055設定、M5Stack画面初期化
+void notifyOtaStatus(const char *status)
+{
+  if (!otaStatusCharacteristic)
+    return;
+
+  otaStatusCharacteristic->setValue((uint8_t *)status, strlen(status));
+  otaStatusCharacteristic->notify();
+}
+
+void notifyDebugLog(const char *message)
+{
+  if (!bleOtaConnected || !debugLogCharacteristic || otaInProgress)
+    return;
+
+  debugLogCharacteristic->setValue((uint8_t *)message, strlen(message));
+  debugLogCharacteristic->notify();
+}
+
+void updateDebugStatus()
+{
+  if (!debugStatCharacteristic)
+    return;
+
+  char status[64];
+  snprintf(status, sizeof(status), "STATE:BLE=%d,WIFI=0,OTA_MODE=%d,IP=0.0.0.0",
+           bleOtaConnected ? 1 : 0,
+           otaModeActive ? 1 : 0);
+  debugStatCharacteristic->setValue((uint8_t *)status, strlen(status));
+  if (bleOtaConnected)
+    debugStatCharacteristic->notify();
+}
+
+String getGameBleName()
+{
+  return "nIpxel_" + name;
+}
+
+String getOtaBleName()
+{
+  return "ESP32-" + getGameBleName();
+}
+
+void startBleAdvertising(BlePairingMode mode)
+{
+  blePairingMode = mode;
+
+  BLEAdvertising *advertising = BLEDevice::getAdvertising();
+  advertising->stop();
+  delay(20);
+
+  String bleName = (mode == BLE_PAIRING_OTA) ? getOtaBleName() : getGameBleName();
+  esp_ble_gap_set_device_name(bleName.c_str());
+
+  BLEAdvertisementData advertisementData;
+  advertisementData.setFlags(0x06);
+  advertisementData.setCompleteServices(BLEUUID(mode == BLE_PAIRING_OTA ? OTA_SERVICE_UUID : GAME_SERVICE_UUID));
+  if (mode == BLE_PAIRING_GAME)
+    advertisementData.setName(bleName.c_str());
+
+  BLEAdvertisementData scanResponseData;
+  scanResponseData.setName(bleName.c_str());
+
+  advertising->setAdvertisementData(advertisementData);
+  advertising->setScanResponseData(scanResponseData);
+  advertising->setScanResponse(true);
+  advertising->setMinPreferred(0x06);
+  advertising->setMaxPreferred(0x12);
+  advertising->start();
+
+  Serial.printf("[BLE] Advertising %s as %s\n", mode == BLE_PAIRING_OTA ? "OTA" : "GAME", bleName.c_str());
+}
+
+void updateBlePairingMode()
+{
+  if (bleClientConnected || otaInProgress || otaFinalizeRequested)
+    return;
+
+  unsigned long nowMs = millis();
+  bool otaWindowExpired = nowMs - otaModeStartedMs >= OTA_PAIRING_WINDOW_MS;
+  bool otaIdleExpired = otaPairingLocked && (nowMs - otaLastActivityMs >= OTA_MODE_TIMEOUT_MS);
+
+  if (blePairingMode == BLE_PAIRING_OTA && otaWindowExpired && (!otaPairingLocked || otaIdleExpired))
+  {
+    otaModeActive = false;
+    otaPairingLocked = false;
+    startBleAdvertising(BLE_PAIRING_GAME);
+    updateDebugStatus();
+  }
+}
+
+class MagiclingOtaServerCallbacks : public BLEServerCallbacks
+{
+  void onConnect(BLEServer *server)
+  {
+    bleClientConnected = true;
+    bleOtaConnected = true;
+    otaLastActivityMs = millis();
+    if (blePairingMode == BLE_PAIRING_OTA)
+    {
+      otaPairingLocked = true;
+      otaModeActive = true;
+    }
+    notifyDebugLog("[BLE] Magicling connected");
+    updateDebugStatus();
+  }
+
+  void onDisconnect(BLEServer *server)
+  {
+    bleClientConnected = false;
+    bleOtaConnected = false;
+    otaLastActivityMs = millis();
+    if (otaInProgress || blePairingMode == BLE_PAIRING_OTA)
+      startBleAdvertising(BLE_PAIRING_OTA);
+    else
+      startBleAdvertising(BLE_PAIRING_GAME);
+  }
+};
+
+class MagiclingDebugCommandCallbacks : public BLECharacteristicCallbacks
+{
+  void onWrite(BLECharacteristic *characteristic)
+  {
+    auto rxValue = characteristic->getValue();
+    if (rxValue.length() == 0)
+      return;
+
+    String command(rxValue.c_str());
+    command.trim();
+
+    if (command == "OTA_MODE")
+    {
+      otaModeActive = true;
+      otaPairingLocked = true;
+      otaLastActivityMs = millis();
+      notifyDebugLog("[OTA] OTA mode enabled");
+      updateDebugStatus();
+    }
+    else if (command == "STATUS")
+    {
+      updateDebugStatus();
+    }
+    else if (command == "ABORT")
+    {
+      otaAbortRequested = true;
+    }
+  }
+};
+
+class GameHapticCallbacks : public BLECharacteristicCallbacks
+{
+  void onWrite(BLECharacteristic *characteristic)
+  {
+    size_t len = characteristic->getLength();
+    if (len < 2)
+      return;
+
+    uint8_t *data = characteristic->getData();
+    directHapticStrength = data[0];
+    uint16_t durationMs = (uint16_t)data[1] * 10;
+
+    if (directHapticStrength == 0 || durationMs == 0)
+    {
+      directHapticStrength = 0;
+      directHapticUntilMs = 0;
+      if (pwmReady)
+        PWM_WRITE(motorPin, pwmChannel, 0);
+      return;
+    }
+
+    directHapticUntilMs = millis() + durationMs;
+    if (pwmReady)
+      PWM_WRITE(motorPin, pwmChannel, directHapticStrength);
+  }
+};
+
+class MagiclingOtaControlCallbacks : public BLECharacteristicCallbacks
+{
+  void onWrite(BLECharacteristic *characteristic)
+  {
+    auto rxValue = characteristic->getValue();
+    if (rxValue.length() == 0)
+      return;
+
+    String command(rxValue.c_str());
+    command.trim();
+
+    if (command.startsWith("START:"))
+    {
+      otaLastActivityMs = millis();
+      size_t size = command.substring(6).toInt();
+      size_t updateSpace = ESP.getFreeSketchSpace() & 0xFFFFF000;
+      if (size == 0 || size > updateSpace)
+      {
+        notifyOtaStatus("ERROR:INVALID_SIZE");
+        return;
+      }
+
+      otaExpectedSize = size;
+      otaReceivedSize = 0;
+      otaLastReportedSize = 0;
+      otaFinalizeRequested = false;
+      otaAbortRequested = false;
+      otaModeActive = true;
+      otaPairingLocked = true;
+
+      if (!Update.begin(size, U_FLASH))
+      {
+        Update.printError(Serial);
+        otaInProgress = false;
+        notifyOtaStatus("ERROR:BEGIN_FAILED");
+        return;
+      }
+
+      otaInProgress = true;
+      PWM_WRITE(motorPin, pwmChannel, 0);
+      notifyOtaStatus("READY");
+      Serial.printf("[BLE OTA] START:%u\n", size);
+    }
+    else if (command == "END")
+    {
+      otaLastActivityMs = millis();
+      if (!otaInProgress)
+      {
+        notifyOtaStatus("ERROR:NOT_STARTED");
+        return;
+      }
+
+      if (otaReceivedSize != otaExpectedSize)
+      {
+        notifyOtaStatus("ERROR:INCOMPLETE");
+        Serial.printf("[BLE OTA] Incomplete: %u / %u\n", otaReceivedSize, otaExpectedSize);
+        return;
+      }
+
+      otaFinalizeRequested = true;
+    }
+    else if (command == "ABORT")
+    {
+      otaLastActivityMs = millis();
+      otaAbortRequested = true;
+    }
+  }
+};
+
+class MagiclingOtaDataCallbacks : public BLECharacteristicCallbacks
+{
+  void onWrite(BLECharacteristic *characteristic)
+  {
+    if (!otaInProgress)
+      return;
+
+    size_t len = characteristic->getLength();
+    if (len == 0)
+      return;
+    otaLastActivityMs = millis();
+
+    if (otaReceivedSize + len > otaExpectedSize)
+    {
+      Update.abort();
+      otaInProgress = false;
+      notifyOtaStatus("ERROR:OVERFLOW");
+      return;
+    }
+
+    size_t written = Update.write(characteristic->getData(), len);
+    if (written != len)
+    {
+      Update.printError(Serial);
+      Update.abort();
+      otaInProgress = false;
+      notifyOtaStatus("ERROR:WRITE_FAILED");
+      return;
+    }
+
+    otaReceivedSize += written;
+    if (otaReceivedSize - otaLastReportedSize >= 102400 || otaReceivedSize == otaExpectedSize)
+    {
+      otaLastReportedSize = otaReceivedSize;
+      Serial.printf("[BLE OTA] Progress: %u / %u\n", otaReceivedSize, otaExpectedSize);
+
+      if (otaReceivedSize == otaExpectedSize || otaReceivedSize % 204800 == 0)
+      {
+        char progress[40];
+        snprintf(progress, sizeof(progress), "PROGRESS:%u/%u", otaReceivedSize, otaExpectedSize);
+        notifyOtaStatus(progress);
+      }
+    }
+  }
+};
+
+void setupBleOta()
+{
+  String bleName = getOtaBleName();
+  BLEDevice::init(bleName.c_str());
+  BLEDevice::setMTU(517);
+
+  otaServer = BLEDevice::createServer();
+  otaServer->setCallbacks(new MagiclingOtaServerCallbacks());
+
+  BLEService *debugService = otaServer->createService(DEBUG_SERVICE_UUID);
+
+  debugLogCharacteristic = debugService->createCharacteristic(
+      DEBUG_LOG_TX_UUID,
+      BLECharacteristic::PROPERTY_NOTIFY);
+  debugLogCharacteristic->addDescriptor(new BLE2902());
+
+  BLECharacteristic *debugCommandCharacteristic = debugService->createCharacteristic(
+      DEBUG_CMD_RX_UUID,
+      BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
+  debugCommandCharacteristic->setCallbacks(new MagiclingDebugCommandCallbacks());
+
+  debugStatCharacteristic = debugService->createCharacteristic(
+      DEBUG_STAT_UUID,
+      BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+  debugStatCharacteristic->addDescriptor(new BLE2902());
+  updateDebugStatus();
+
+  debugService->start();
+
+  BLEService *gameService = otaServer->createService(GAME_SERVICE_UUID);
+
+  gameSensorCharacteristic = gameService->createCharacteristic(
+      GAME_SENSOR_CHAR_UUID,
+      BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+  gameSensorCharacteristic->addDescriptor(new BLE2902());
+  uint8_t initialSensorFrame[1 + sizeof(int16_t) * 6] = {'S', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  gameSensorCharacteristic->setValue(initialSensorFrame, sizeof(initialSensorFrame));
+
+  BLECharacteristic *gameHapticCharacteristic = gameService->createCharacteristic(
+      GAME_HAPTIC_CHAR_UUID,
+      BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
+  gameHapticCharacteristic->setCallbacks(new GameHapticCallbacks());
+
+  gameService->start();
+
+  BLEService *otaService = otaServer->createService(OTA_SERVICE_UUID);
+
+  BLECharacteristic *otaControlCharacteristic = otaService->createCharacteristic(
+      OTA_CONTROL_UUID,
+      BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
+  otaControlCharacteristic->setCallbacks(new MagiclingOtaControlCallbacks());
+
+  BLECharacteristic *otaDataCharacteristic = otaService->createCharacteristic(
+      OTA_DATA_UUID,
+      BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
+  otaDataCharacteristic->setCallbacks(new MagiclingOtaDataCallbacks());
+
+  otaStatusCharacteristic = otaService->createCharacteristic(
+      OTA_STATUS_UUID,
+      BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+  otaStatusCharacteristic->addDescriptor(new BLE2902());
+  otaStatusCharacteristic->setValue("IDLE");
+
+  otaService->start();
+
+  otaModeStartedMs = millis();
+  otaLastActivityMs = otaModeStartedMs;
+  startBleAdvertising(BLE_PAIRING_OTA);
+
+  Serial.println("BLE OTA pairing start");
+}
+
+void handleBleOta()
+{
+  if (otaAbortRequested)
+  {
+    otaAbortRequested = false;
+    if (otaInProgress)
+      Update.abort();
+    otaInProgress = false;
+    otaModeActive = false;
+    notifyOtaStatus("ABORTED");
+    updateDebugStatus();
+  }
+
+  if (!otaFinalizeRequested)
+    return;
+
+  otaFinalizeRequested = false;
+  Serial.printf("[BLE OTA] Finalizing: %u bytes\n", otaReceivedSize);
+
+  if (Update.end(true))
+  {
+    otaInProgress = false;
+    otaModeActive = false;
+    notifyOtaStatus("SUCCESS");
+    Serial.println("[BLE OTA] Update success. Rebooting...");
+    delay(1000);
+    ESP.restart();
+  }
+  else
+  {
+    Update.printError(Serial);
+    otaInProgress = false;
+    otaModeActive = false;
+    notifyOtaStatus("ERROR:END_FAILED");
+    updateDebugStatus();
+  }
+}
+
 void setup()
 {
   Serial.begin(115200);
-  SerialBT.begin("LOLIN32_Lite_" + name);
+  SerialBT.begin("nIpxel_" + name);
   Serial.println("Bluetooth SPP start");
+  setupBleOta();
   Wire.begin(23, 19);
   Wire.setTimeOut(100);
 
@@ -345,6 +837,7 @@ void setup()
 
   // PWM初期化
   PWM_INIT(motorPin, pwmFreq, pwmResolution, pwmChannel);
+  pwmReady = true;
   digitalWrite(LED_PIN, LOW); // LED点灯
   prevMicros = micros();      // 時間計測初期化
 }
@@ -353,6 +846,14 @@ void setup()
 // 各処理関数を順番に呼び出して動作
 void loop()
 {
+  handleBleOta();
+  updateBlePairingMode();
+  if (otaInProgress || otaFinalizeRequested || otaAbortRequested)
+  {
+    delay(10);
+    return;
+  }
+
   // 経過時間（秒）を計算（今回は未使用だが処理間隔確認に使える）
   float dt = (micros() - prevMicros) / 1e6;
   prevMicros = micros();

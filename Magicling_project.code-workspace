@@ -21,7 +21,7 @@
         "name": "Build and Upload Lolin32 Lite",
         "type": "node-terminal",
         "request": "launch",
-        "command": "cmd.exe /c \"\"C:\\Program Files\\Arduino CLI\\arduino-cli.exe\" compile --fqbn esp32:esp32:lolin32 . && \"C:\\Program Files\\Arduino CLI\\arduino-cli.exe\" upload --fqbn esp32:esp32:lolin32 -p COM11 .\""
+        "command": "cmd.exe /c \"\"C:\\Program Files\\Arduino CLI\\arduino-cli.exe\" compile --fqbn esp32:esp32:lolin32:PartitionScheme=min_spiffs,UploadSpeed=921600 --output-dir build Magicling_code && \"C:\\Program Files\\Arduino CLI\\arduino-cli.exe\" upload --fqbn esp32:esp32:lolin32:PartitionScheme=min_spiffs,UploadSpeed=921600 -p COM11 --input-dir build Magicling_code\""
       }
     ]
   },
@@ -31,7 +31,7 @@
       {
         "label": "Arduino CLI: Upload (Lolin32 Lite)",
         "type": "shell",
-        "command": "cmd.exe /c \"\"C:\\Program Files\\Arduino CLI\\arduino-cli.exe\" compile --fqbn esp32:esp32:lolin32 . && \"C:\\Program Files\\Arduino CLI\\arduino-cli.exe\" upload --fqbn esp32:esp32:lolin32 -p COM11 .\"",
+        "command": "cmd.exe /c \"\"C:\\Program Files\\Arduino CLI\\arduino-cli.exe\" compile --fqbn esp32:esp32:lolin32:PartitionScheme=min_spiffs,UploadSpeed=921600 --output-dir build Magicling_code && \"C:\\Program Files\\Arduino CLI\\arduino-cli.exe\" upload --fqbn esp32:esp32:lolin32:PartitionScheme=min_spiffs,UploadSpeed=921600 -p COM11 --input-dir build Magicling_code\"",
         "options": {
           "shell": {
             "executable": "cmd.exe"
