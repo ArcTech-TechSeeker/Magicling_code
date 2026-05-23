@@ -13,7 +13,7 @@
 * **座標安定化**：クォータニオン→回転行列で**グローバル座標系加速度**を算出
 * **ジャンプ補償**：Yaw のスパイク（磁気外乱等）を短時間固定＋オフセットで自然連続化
 * **ハプティクス**：振動モータを **200 Hz / 8bit PWM** で駆動（アナログ追従／点滅パターン）
-* **軽量通信**：Bluetooth SPP で **固定小数バイナリ**（13 B/フレーム）を周期送信
+* **軽量通信**：Bluetooth SPP で **固定小数バイナリ**（15 B/フレーム）を周期送信
 * **2P対応**：デバイス名末尾を `"1P"` / `"2P"` で切替
 
 ---
@@ -88,20 +88,21 @@ ESP32 Arduino Core v2/v3 の差異をマクロで吸収（`ledcSetup/AttachPin` 
 
 ## Bluetooth SPP プロトコル
 
-**1 フレーム = 13 バイト**
+**1 フレーム = 15 バイト**
 
 * 先頭ヘッダ：`'S'`（1 B）
-* ペイロード：**int16 × 6**（12 B, Little-Endian）
+* ペイロード：**int16 × 7**（14 B, Little-Endian）
 
   1. `ax_global × 100`（2桁固定小数）
   2. `ay_global × 100`
   3. `az_global × 100`
-  4. `pitch × 10`（1桁固定小数）
-  5. `yaw × 10`
-  6. `roll × 10`
+  4. `qw × 10000`（4桁固定小数）
+  5. `qx × 10000`
+  6. `qy × 10000`
+  7. `qz × 10000`
 
 **送信周期**：およそ **100 Hz**（`delay(10)` 目安）
-**デコード（受信側）**：LE の `int16` を実数に復元（加速度÷100、角度÷10）。ヘッダ `'S'` で同期。
+**デコード（受信側）**：LE の `int16` を実数に復元（加速度÷100、Quaternion÷10000）。ヘッダ `'S'` で同期。
 
 ---
 
@@ -122,7 +123,7 @@ ESP32 Arduino Core v2/v3 の差異をマクロで吸収（`ledcSetup/AttachPin` 
 ## 起動と使用
 
 1. 電源投入／SPP ペアリング：デバイス名は `"LOLIN32_Lite_1P"`（`name` で `"2P"` に切替可）
-2. ホストは SPP で **13B 固定フレーム**を連続受信
+2. ホストは SPP で **15B 固定フレーム**を連続受信
 3. 必要に応じ `'0'..'5'` を送信して**ハプティクスモード**を切替
 
 ---
@@ -171,7 +172,7 @@ Project site: https://nipxel.netlify.app/
 - **Coordinate stabilization**: Converts quaternion → rotation matrix to compute **global-frame acceleration**
 - **Jump compensation**: Detects yaw spikes (e.g., magnetic disturbance), briefly freezes + applies an offset for smooth continuity
 - **Haptics**: Drives a vibration motor at **200 Hz / 8-bit PWM** (analog follow / blink patterns)
-- **Lightweight transport**: Periodically sends **fixed-point binary** frames over Bluetooth SPP (**13 B/frame**)
+- **Lightweight transport**: Periodically sends **fixed-point binary** frames over Bluetooth SPP (**15 B/frame**)
 - **Two-player support**: Switch the device name suffix to `"1P"` / `"2P"`
 
 ---
@@ -248,20 +249,21 @@ Absorbs differences between ESP32 Arduino Core v2/v3 using macros (e.g., `ledcSe
 
 ## Bluetooth SPP Protocol
 
-**1 frame = 13 bytes**
+**1 frame = 15 bytes**
 
 - Header: `'S'` (1 B)
-- Payload: **int16 × 6** (12 B, Little-Endian)
+- Payload: **int16 × 7** (14 B, Little-Endian)
 
   1. `ax_global × 100` (fixed-point with 2 decimals)
   2. `ay_global × 100`
   3. `az_global × 100`
-  4. `pitch × 10` (fixed-point with 1 decimal)
-  5. `yaw × 10`
-  6. `roll × 10`
+  4. `qw × 10000` (fixed-point with 4 decimals)
+  5. `qx × 10000`
+  6. `qy × 10000`
+  7. `qz × 10000`
 
 **Transmit rate**: approx. **100 Hz** (target via `delay(10)`)  
-**Decode (receiver)**: Convert LE `int16` back to float (accel ÷ 100, angles ÷ 10). Use header `'S'` for synchronization.
+**Decode (receiver)**: Convert LE `int16` back to float (accel ÷ 100, quaternion ÷ 10000). Use header `'S'` for synchronization.
 
 ---
 
@@ -282,7 +284,7 @@ Absorbs differences between ESP32 Arduino Core v2/v3 using macros (e.g., `ledcSe
 ## Startup & Usage
 
 1. Power on / pair via SPP: device name defaults to `"LOLIN32_Lite_1P"` (set `name` to switch to `"2P"`)
-2. Host continuously receives **13-byte fixed frames** over SPP
+2. Host continuously receives **15-byte fixed frames** over SPP
 3. Send `'0'..'5'` as needed to switch **haptics modes**
 
 ---
@@ -346,7 +348,7 @@ The device also exposes the game-facing BLE service used by
 * Service: `12345678-1234-1234-1234-123456789abc`
 * Sensor Notify: `12345678-1234-1234-1234-123456789abd`
 * Haptic Write: `12345678-1234-1234-1234-123456789abe`
-* Sensor frame: 15 bytes, `S` + sequence byte + six little-endian `int16` values + flags byte
+* Sensor frame: 17 bytes, `S` + sequence byte + seven little-endian `int16` values + flags byte
 * Haptic command: 2 bytes, `strength` and `duration` in 10 ms units
 
 Arduino CLI build outputs are written to the workspace-local `build/` folder.

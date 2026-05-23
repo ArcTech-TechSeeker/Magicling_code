@@ -36,8 +36,7 @@ Adafruit_BNO055 bno(55, 0x29);
 const int LED_PIN = 22;
 
 // 1P,2Pの指定
-// String name = "1P";
-String name = "2p";
+String name = "1P";
 
 // PWM設定
 const int motorPin = 25;     // 振動モータの制御ピン（GPIO25））
@@ -107,6 +106,7 @@ float ax_f = 0, ay_f = 0, az_f = 0; // ローパス適用後の加速度
 // yaw_offset: ジャンプ後の補正値
 float yaw = 0, yaw_prev = 0, yaw_raw = 0.0, saved_yaw = 0.0;
 float attack_yaw = 0, yaw_offset = 0;
+bool yaw_comp_initialized = false;
 
 // roll:ロール角
 // pitch:ピッチ角
@@ -129,6 +129,8 @@ unsigned long prevMicros = 0; // 前回のループ開始時刻（µs）
 // quat: クォータニオン姿勢
 imu::Vector<3> linAcc, euler, mag;
 imu::Quaternion quat;
+imu::Quaternion quat_corrected;
+imu::Quaternion quat_saved;
 
 // ==== ユーティリティ関数 ====
 // ±180°の範囲に角度を正規化する（何度でも繰り返して収める）
@@ -139,6 +141,39 @@ float normalize180(float angle)
   while (angle <= -180.0f)
     angle += 360.0f;
   return angle;
+}
+
+float yawFromQuaternion(const imu::Quaternion &q)
+{
+  float qw = q.w(), qx = q.x(), qy = q.y(), qz = q.z();
+  float yaw_deg = atan2f(2.0f * (qx * qy + qz * qw),
+                         1.0f - 2.0f * (qy * qy + qz * qz)) *
+                  180.0f / PI;
+  return normalize180(yaw_deg);
+}
+
+imu::Quaternion yawCorrectionQuaternion(float yaw_deg)
+{
+  float yaw_rad = yaw_deg * PI / 180.0f;
+  imu::Quaternion correction(cosf(yaw_rad * 0.5f), 0.0f, 0.0f, sinf(yaw_rad * 0.5f));
+  correction.normalize();
+  return correction;
+}
+
+imu::Quaternion normalizedForSend(imu::Quaternion q)
+{
+  q.normalize();
+  if (q.w() < 0.0f)
+  {
+    q = q * -1.0;
+  }
+  return q;
+}
+
+imu::Quaternion applyYawCorrection(const imu::Quaternion &source, float offset_deg)
+{
+  imu::Quaternion corrected = yawCorrectionQuaternion(-offset_deg) * source;
+  return normalizedForSend(corrected);
 }
 
 // ==== センサー値の取得とローパスフィルタ適用 ====
@@ -211,38 +246,55 @@ void updaterollandpitch()
   }
 }
 
-// ==== ジャンプ検出と補正 ====
-// 急激なYaw変化（ジャンプ）を検出し、一定時間固定表示後に補正適用
+// ==== ジャンプ検出とQuaternion補正 ====
+// 急激なYaw変化を検出し、短時間quatを固定した後にYawオフセットで連続化する
 void updateJumpCompensation(float axy_pure)
 {
-  // センサーから生Yaw取得（±180°に正規化）
-  yaw_raw = normalize180(euler.x());
-  // 前回との差分を±180°で計算
+  // センサーQuaternionから生Yaw取得（±180°に正規化）
+  yaw_raw = yawFromQuaternion(quat);
+  if (!yaw_comp_initialized)
+  {
+    yaw_prev = yaw_raw;
+    saved_yaw = yaw_raw;
+    yaw = normalize180(yaw_raw - yaw_offset);
+    quat_corrected = applyYawCorrection(quat, yaw_offset);
+    quat_saved = quat_corrected;
+    yaw_comp_initialized = true;
+    return;
+  }
+
   float diff = normalize180(yaw_raw - yaw_prev);
   jump_prev = jump;
 
-  // ジャンプ検出条件: Yaw差分が大きく、かつジャンプ中でなく、XY加速度が小さいとき
   if (abs(diff) > 45 && abs(diff) < 320 && jump == 0 && abs(axy_pure) < 0.5)
   {
     jump = 1;
     j = 0;
-    saved_yaw = yaw_prev; // ジャンプ開始
+    saved_yaw = yaw_prev;
+    quat_saved = quat_corrected;
   }
 
   if (jump == 1)
   {
     j++;
-    yaw = saved_yaw; // ジャンプ中は表示Yaw固定
+    yaw = normalize180(saved_yaw - yaw_offset);
+    quat_corrected = quat_saved;
+
     if (j >= j_wall)
-    { // 待機ループ終了
+    {
       float new_diff = normalize180(yaw_raw - saved_yaw);
-      yaw_offset += new_diff; // オフセット補正
-      jump = 0;               // ジャンプ終了
+      yaw_offset += new_diff;
+      jump = 0;
+      yaw = normalize180(yaw_raw - yaw_offset);
+      quat_corrected = applyYawCorrection(quat, yaw_offset);
+      quat_saved = quat_corrected;
     }
   }
   else
   {
-    yaw = normalize180(yaw_raw - yaw_offset); // 通常はオフセット適用
+    yaw = normalize180(yaw_raw - yaw_offset);
+    quat_corrected = applyYawCorrection(quat, yaw_offset);
+    quat_saved = quat_corrected;
   }
 
   // 次回比較用にYaw生値を保存
@@ -282,7 +334,7 @@ void Vibration(float ax_global, float ay_global, float az_global)
   if (in == '5')
   {
     // 最新センサー値からyaw_rawを再計算して確実に最新を使用
-    yaw_raw = normalize180(euler.x());
+    yaw_raw = yawFromQuaternion(quat);
     // 表示角 yaw = normalize180(yaw_raw - yaw_offset) が 0 になるように設定
     yaw_offset = yaw_raw;
     // ジャンプ状態をクリアし、直ちに反映
@@ -290,6 +342,9 @@ void Vibration(float ax_global, float ay_global, float az_global)
     j = 0;
     saved_yaw = yaw_raw;
     yaw = 0;
+    quat_corrected = applyYawCorrection(quat, yaw_offset);
+    quat_saved = quat_corrected;
+    yaw_comp_initialized = true;
   }
 
   // 想定外の文字は無視して直前の値に戻す
@@ -359,44 +414,47 @@ void Vibration(float ax_global, float ay_global, float az_global)
 // ===============================
 // データ送信（シリアル通信）
 // ===============================
-// Send six values over Bluetooth:
+// Send seven values over Bluetooth:
 //  - Accel ax, ay, az as fixed-point (2 decimals): value * 100 -> int16
-//  - Angles pitch, yaw, roll as fixed-point (1 decimal): value * 10 -> int16
-void buildSensorPayload(uint8_t *payload, float ax_global, float ay_global, float az_global, float pitch_val, float yaw_val, float roll_val)
+//  - Quaternion qw, qx, qy, qz as fixed-point (4 decimals): value * 10000 -> int16
+void buildSensorPayload(uint8_t *payload, float ax_global, float ay_global, float az_global, const imu::Quaternion &quat_val)
 {
   int16_t ax_to_send = (int16_t)roundf(ax_global * 100.0f);
   int16_t ay_to_send = (int16_t)roundf(ay_global * 100.0f);
   int16_t az_to_send = (int16_t)roundf(az_global * 100.0f);
-  int16_t pitch_to_send = (int16_t)roundf(pitch_val * 10.0f);
-  int16_t yaw_to_send = (int16_t)roundf(yaw_val * 10.0f);
-  int16_t roll_to_send = (int16_t)roundf(roll_val * 10.0f);
+  imu::Quaternion q = normalizedForSend(quat_val);
+  int16_t qw_to_send = (int16_t)roundf(q.w() * 10000.0f);
+  int16_t qx_to_send = (int16_t)roundf(q.x() * 10000.0f);
+  int16_t qy_to_send = (int16_t)roundf(q.y() * 10000.0f);
+  int16_t qz_to_send = (int16_t)roundf(q.z() * 10000.0f);
 
   memcpy(payload + 0 * sizeof(int16_t), &ax_to_send, sizeof(int16_t));
   memcpy(payload + 1 * sizeof(int16_t), &ay_to_send, sizeof(int16_t));
   memcpy(payload + 2 * sizeof(int16_t), &az_to_send, sizeof(int16_t));
-  memcpy(payload + 3 * sizeof(int16_t), &pitch_to_send, sizeof(int16_t));
-  memcpy(payload + 4 * sizeof(int16_t), &yaw_to_send, sizeof(int16_t));
-  memcpy(payload + 5 * sizeof(int16_t), &roll_to_send, sizeof(int16_t));
+  memcpy(payload + 3 * sizeof(int16_t), &qw_to_send, sizeof(int16_t));
+  memcpy(payload + 4 * sizeof(int16_t), &qx_to_send, sizeof(int16_t));
+  memcpy(payload + 5 * sizeof(int16_t), &qy_to_send, sizeof(int16_t));
+  memcpy(payload + 6 * sizeof(int16_t), &qz_to_send, sizeof(int16_t));
 }
 
-void buildSerialSensorFrame(uint8_t *frame, float ax_global, float ay_global, float az_global, float pitch_val, float yaw_val, float roll_val)
+void buildSerialSensorFrame(uint8_t *frame, float ax_global, float ay_global, float az_global, const imu::Quaternion &quat_val)
 {
   frame[0] = 'S';
-  buildSensorPayload(frame + 1, ax_global, ay_global, az_global, pitch_val, yaw_val, roll_val);
+  buildSensorPayload(frame + 1, ax_global, ay_global, az_global, quat_val);
 }
 
-void buildGameSensorFrame(uint8_t *frame, float ax_global, float ay_global, float az_global, float pitch_val, float yaw_val, float roll_val)
+void buildGameSensorFrame(uint8_t *frame, float ax_global, float ay_global, float az_global, const imu::Quaternion &quat_val)
 {
   frame[0] = 'S';
   frame[1] = sensorSequence++;
-  buildSensorPayload(frame + 2, ax_global, ay_global, az_global, pitch_val, yaw_val, roll_val);
-  frame[14] = 0;
+  buildSensorPayload(frame + 2, ax_global, ay_global, az_global, quat_val);
+  frame[16] = 0;
 }
 
-void outputDataAsBytes(float ax_global, float ay_global, float az_global, float pitch_val, float yaw_val, float roll_val)
+void outputDataAsBytes(float ax_global, float ay_global, float az_global, const imu::Quaternion &quat_val)
 {
-  uint8_t frame[1 + sizeof(int16_t) * 6];
-  buildSerialSensorFrame(frame, ax_global, ay_global, az_global, pitch_val, yaw_val, roll_val);
+  uint8_t frame[1 + sizeof(int16_t) * 7];
+  buildSerialSensorFrame(frame, ax_global, ay_global, az_global, quat_val);
 
   SerialBT.write(frame, sizeof(frame));
 
@@ -405,8 +463,8 @@ void outputDataAsBytes(float ax_global, float ay_global, float az_global, float 
       nowMs - lastGameNotifyMs >= GAME_NOTIFY_INTERVAL_MS)
   {
     lastGameNotifyMs = nowMs;
-    uint8_t gameFrame[15];
-    buildGameSensorFrame(gameFrame, ax_global, ay_global, az_global, pitch_val, yaw_val, roll_val);
+    uint8_t gameFrame[17];
+    buildGameSensorFrame(gameFrame, ax_global, ay_global, az_global, quat_val);
     gameSensorCharacteristic->setValue(gameFrame, sizeof(gameFrame));
     gameSensorCharacteristic->notify();
   }
@@ -739,7 +797,8 @@ void setupBleOta()
       GAME_SENSOR_CHAR_UUID,
       BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
   gameSensorCharacteristic->addDescriptor(new BLE2902());
-  uint8_t initialSensorFrame[1 + sizeof(int16_t) * 6] = {'S', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  uint8_t initialSensorFrame[2 + sizeof(int16_t) * 7 + 1] = {'S'};
+  initialSensorFrame[16] = 0;
   gameSensorCharacteristic->setValue(initialSensorFrame, sizeof(initialSensorFrame));
 
   BLECharacteristic *gameHapticCharacteristic = gameService->createCharacteristic(
@@ -881,8 +940,8 @@ void loop()
   calcGlobalAcceleration(ax_global, ay_global, az_global);                     // グローバル加速度算出
   updateJumpCompensation(sqrt(ax_global * ax_global + ay_global * ay_global)); // ジャンプ補正
   Vibration(ax_global, ay_global, az_global);
-  // Bluetooth通信で情報の送信（ax,ay,az,pitch,yaw,roll を1桁固定小数で送る）
-  outputDataAsBytes(ax_global, ay_global, az_global, pitch, yaw, roll);
+  // Bluetooth通信で情報の送信（ax,ay,az,qw,qx,qy,qz を固定小数で送る）
+  outputDataAsBytes(ax_global, ay_global, az_global, quat_corrected);
 
   // ループカウンタ更新（4000を超えたら1に戻す）
   l++;
