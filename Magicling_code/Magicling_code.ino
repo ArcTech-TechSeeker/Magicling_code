@@ -98,26 +98,13 @@ int l = 0;               // メインループカウンタ
 float alpha = 0.7;
 float ax_f = 0, ay_f = 0, az_f = 0; // ローパス適用後の加速度
 
-// ==== Yaw（ヨー角）関連変数 ====
-// yaw: 表示用Yaw角（補正適用後）
-// yaw_prev: 前回のYaw角（生データ）
-// yaw_raw: 生のYaw角（補正前）
-// saved_yaw: ジャンプ前に安定していたYaw角
-// yaw_offset: ジャンプ後の補正値
-float yaw = 0, yaw_prev = 0, yaw_raw = 0.0, saved_yaw = 0.0;
-float attack_yaw = 0, yaw_offset = 0;
-bool yaw_comp_initialized = false;
+// ==== 手動Yawゼロ設定 ====
+// 自動ジャンプ補償は行わず、'5'入力時のゼロ設定だけに使用する。
+float yaw_offset = 0;
 
 // roll:ロール角
 // pitch:ピッチ角
 float roll = 0, pitch = 0, pitch_pre = 0;
-
-// ==== ジャンプ（急激なYaw変化）検出用変数 ====
-// jump: ジャンプ状態フラグ
-// jump_prev: 前回のジャンプ状態
-// j: ジャンプ状態の経過カウント
-// j_wall: ジャンプ固定表示するループ回数
-int jump = 0, jump_prev = 0, j = 0, j_wall = 2;
 
 // ==== 時間計測用変数 ====
 unsigned long prevMicros = 0; // 前回のループ開始時刻（µs）
@@ -130,7 +117,6 @@ unsigned long prevMicros = 0; // 前回のループ開始時刻（µs）
 imu::Vector<3> linAcc, euler, mag;
 imu::Quaternion quat;
 imu::Quaternion quat_corrected;
-imu::Quaternion quat_saved;
 
 // ==== ユーティリティ関数 ====
 // ±180°の範囲に角度を正規化する（何度でも繰り返して収める）
@@ -246,61 +232,6 @@ void updaterollandpitch()
   }
 }
 
-// ==== ジャンプ検出とQuaternion補正 ====
-// 急激なYaw変化を検出し、短時間quatを固定した後にYawオフセットで連続化する
-void updateJumpCompensation(float axy_pure)
-{
-  // センサーQuaternionから生Yaw取得（±180°に正規化）
-  yaw_raw = yawFromQuaternion(quat);
-  if (!yaw_comp_initialized)
-  {
-    yaw_prev = yaw_raw;
-    saved_yaw = yaw_raw;
-    yaw = normalize180(yaw_raw - yaw_offset);
-    quat_corrected = applyYawCorrection(quat, yaw_offset);
-    quat_saved = quat_corrected;
-    yaw_comp_initialized = true;
-    return;
-  }
-
-  float diff = normalize180(yaw_raw - yaw_prev);
-  jump_prev = jump;
-
-  if (abs(diff) > 45 && abs(diff) < 320 && jump == 0 && abs(axy_pure) < 0.5)
-  {
-    jump = 1;
-    j = 0;
-    saved_yaw = yaw_prev;
-    quat_saved = quat_corrected;
-  }
-
-  if (jump == 1)
-  {
-    j++;
-    yaw = normalize180(saved_yaw - yaw_offset);
-    quat_corrected = quat_saved;
-
-    if (j >= j_wall)
-    {
-      float new_diff = normalize180(yaw_raw - saved_yaw);
-      yaw_offset += new_diff;
-      jump = 0;
-      yaw = normalize180(yaw_raw - yaw_offset);
-      quat_corrected = applyYawCorrection(quat, yaw_offset);
-      quat_saved = quat_corrected;
-    }
-  }
-  else
-  {
-    yaw = normalize180(yaw_raw - yaw_offset);
-    quat_corrected = applyYawCorrection(quat, yaw_offset);
-    quat_saved = quat_corrected;
-  }
-
-  // 次回比較用にYaw生値を保存
-  yaw_prev = yaw_raw;
-}
-
 // 加速度ベクトルの大きさに基づいて振動モータを制御する関数
 void Vibration(float ax_global, float ay_global, float az_global)
 {
@@ -330,21 +261,13 @@ void Vibration(float ax_global, float ay_global, float az_global)
     in = in0;
   }
 
-  // '5' が来たらその時点のYawを0にするようにオフセットを更新
-  if (in == '5')
+  // '5'へ切り替わった瞬間だけ、その時点のYawを0にする。
+  // 押下後に毎ループYawを再計算すると、±90°特異点を再び通るため連続実行しない。
+  if (in == '5' && in0 != '5')
   {
-    // 最新センサー値からyaw_rawを再計算して確実に最新を使用
-    yaw_raw = yawFromQuaternion(quat);
-    // 表示角 yaw = normalize180(yaw_raw - yaw_offset) が 0 になるように設定
+    // 手動操作時だけQuaternionからYawを求める。
+    float yaw_raw = yawFromQuaternion(quat);
     yaw_offset = yaw_raw;
-    // ジャンプ状態をクリアし、直ちに反映
-    jump = 0;
-    j = 0;
-    saved_yaw = yaw_raw;
-    yaw = 0;
-    quat_corrected = applyYawCorrection(quat, yaw_offset);
-    quat_saved = quat_corrected;
-    yaw_comp_initialized = true;
   }
 
   // 想定外の文字は無視して直前の値に戻す
@@ -937,9 +860,11 @@ void loop()
 
   float ax_global, ay_global, az_global;
   updaterollandpitch();
-  calcGlobalAcceleration(ax_global, ay_global, az_global);                     // グローバル加速度算出
-  updateJumpCompensation(sqrt(ax_global * ax_global + ay_global * ay_global)); // ジャンプ補正
+  calcGlobalAcceleration(ax_global, ay_global, az_global); // グローバル加速度算出
   Vibration(ax_global, ay_global, az_global);
+  // 自動ジャンプ補償は行わない。通常時は生Quaternionを正規化して送信する。
+  // '5'で手動ゼロ設定された場合のみ、明示的なYawオフセットを適用する。
+  quat_corrected = applyYawCorrection(quat, yaw_offset);
   // Bluetooth通信で情報の送信（ax,ay,az,qw,qx,qy,qz を固定小数で送る）
   outputDataAsBytes(ax_global, ay_global, az_global, quat_corrected);
 
@@ -949,6 +874,6 @@ void loop()
     l = 1;
 
   // デバッグ用に加速度・Yaw値をシリアル出力
-  // Serial.printf("%.3f,%.3f,%.3f \n", ax_f, euler.x(), yaw);
+  // Serial.printf("%.3f,%.3f \n", ax_f, euler.x());
   delay(10); // CPU負荷低減
 }
